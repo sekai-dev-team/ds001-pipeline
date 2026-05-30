@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import sys
 from datetime import datetime, timezone
 
@@ -156,7 +157,7 @@ def main() -> None:
                     "Tweet fallback accepted: %s (summary=%d chars; url_hint=%s)",
                     article.title, len(article.summary) if article.summary else 0, url_hint,
                 )
-            elif article.summary and len(article.summary) >= MIN_SUMMARY_CHARS:
+            elif article.summary and len(re.sub(r'<[^>]+>', '', article.summary).strip()) >= MIN_SUMMARY_CHARS:
                 quality_articles.append(article)
             else:
                 summary_len = len(article.summary) if article.summary else 0

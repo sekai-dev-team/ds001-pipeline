@@ -42,7 +42,7 @@ def url_pattern_hint(url: str) -> str:
     # Discussion sites
     if "news.ycombinator.com/item" in url:
         return "hn_discussion"
-    if "old.reddit.com" in url:
+    if "reddit.com" in url:
         return "reddit_discussion"
     if ".mastodon." in url or "mastodon.social" in url:
         return "discussion_site"
@@ -131,13 +131,34 @@ def _fetch_reddit_discussion(url: str) -> Optional[str]:
     try:
         import requests as req_lib
 
-        resp = req_lib.get(
-            json_url,
-            timeout=30,
-            headers={"User-Agent": "DS-001-Pipeline/0.2"},
-        )
-        resp.raise_for_status()
-        data = resp.json()
+        def _try_fetch(target_url: str) -> Optional[list]:
+            resp = req_lib.get(
+                target_url,
+                timeout=30,
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (compatible; DS-001-Pipeline/0.2.3)"
+                    ),
+                },
+            )
+            if resp.status_code == 403:
+                return None
+            resp.raise_for_status()
+            return resp.json()
+
+        data = _try_fetch(json_url)
+        if data is None:
+            # Fallback: try www.reddit.com when old.reddit.com returns 403
+            fallback_url = json_url.replace("old.reddit.com", "www.reddit.com")
+            if fallback_url != json_url:
+                logger.info(
+                    "old.reddit.com returned 403, falling back to %s",
+                    fallback_url,
+                )
+                data = _try_fetch(fallback_url)
+
+        if data is None:
+            return None
 
         if not isinstance(data, list) or len(data) < 2:
             return None
