@@ -153,6 +153,10 @@ NITTER_INSTANCES = [
     "https://nitter.net",
     "https://nitter.privacydev.net",
     "https://nitter.poast.org",
+    "https://nitter.1d4.us",
+    "https://nitter.space",
+    "https://nitter.lacontrevoie.fr",
+    "https://nitter.cz",
 ]
 
 
@@ -301,7 +305,28 @@ def _fetch_anthropic_twitter() -> list[Article]:
 
 _register("@AnthropicAI", _fetch_anthropic_twitter)
 
-# ====================== 9. @hwchase17 (Nitter RSS) ==========================
+# ====================== 9. Anthropic News (Google News RSS) ===================
+
+def _fetch_anthropic_news() -> list[Article]:
+    """Google News RSS for Anthropic — catches news coverage, partnerships, launches."""
+    url = "https://news.google.com/rss/search?q=Anthropic+Claude+AI&hl=en-US&gl=US&ceid=US:en"
+    feed = _fetch_feed(url)
+    if feed is None:
+        return []
+    articles: list[Article] = []
+    for entry in feed.entries:
+        article = _rss_entry_to_article(
+            entry,
+            source_name="Anthropic News (Google News)",
+            source_tag="source/anthropic-news",
+        )
+        if article is not None:
+            articles.append(article)
+    return articles
+
+_register("Anthropic News", _fetch_anthropic_news)
+
+# ====================== 10. @hwchase17 (Nitter RSS) ==========================
 
 def _fetch_hwchase17() -> list[Article]:
     return _fetch_nitter_feed(
@@ -312,7 +337,7 @@ def _fetch_hwchase17() -> list[Article]:
 
 _register("@hwchase17", _fetch_hwchase17)
 
-# ====================== 10. @steipete (Nitter RSS) ==========================
+# ====================== 11. @steipete (Nitter RSS) ==========================
 
 def _fetch_steipete() -> list[Article]:
     return _fetch_nitter_feed(
@@ -323,7 +348,7 @@ def _fetch_steipete() -> list[Article]:
 
 _register("@steipete", _fetch_steipete)
 
-# ====================== 11. Hacker News (3 sub-streams) ====================
+# ====================== 12. Hacker News (3 sub-streams) ====================
 
 HN_STREAMS = [
     ("HN Frontpage", "https://hnrss.org/frontpage?count=30"),
@@ -361,7 +386,7 @@ def _fetch_hackernews() -> list[Article]:
 
 _register("Hacker News", _fetch_hackernews)
 
-# ====================== 12. arXiv (cs.AI + cs.CL) =========================
+# ====================== 13. arXiv (cs.AI + cs.CL) =========================
 
 ARXIV_QUERY = (
     "http://export.arxiv.org/api/query?"
@@ -381,8 +406,12 @@ def _fetch_arxiv() -> list[Article]:
         # arXiv links in <id> are http, prefer https
         if link.startswith("http://"):
             link = "https://" + link[7:]
-        if not _within_last_24h(entry):
-            continue
+        # arXiv does NOT use _within_last_24h():
+        # - published timestamp = SUBMISSION time, not announcement
+        # - papers are announced in daily batches (submitted by 14:00 ET, announced ~20:00 ET next day)
+        # - a 24h window from submission time means papers >24h old are invisible
+        # - instead, we rely on sortBy=submittedDate desc + max_results=50 to get the latest batch
+        # - k-mcp write_note dedup prevents re-ingestion of same URL
         articles.append(
             Article(
                 title=entry.get("title", "").strip().replace("\n", " "),

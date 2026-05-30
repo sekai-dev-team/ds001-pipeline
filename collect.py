@@ -185,6 +185,31 @@ def main() -> None:
         logger.info("No quality-passing articles to ingest")
 
     # ------------------------------------------------------------------
+    # Step 4.5: Per-source statistics
+    # ------------------------------------------------------------------
+    from collections import defaultdict
+
+    per_source: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"fetched": 0, "relevant": 0, "fulltext": 0, "quality_passed": 0, "ingested": 0}
+    )
+
+    for article in all_articles:
+        per_source[article.source_name]["fetched"] += 1
+
+    for article in relevant_articles:
+        per_source[article.source_name]["relevant"] += 1
+        if article.has_fulltext:
+            per_source[article.source_name]["fulltext"] += 1
+
+    for article in quality_articles:
+        per_source[article.source_name]["quality_passed"] += 1
+
+    # For ingested — track by article in write_notes
+    # (write_notes writes in order, so match by index)
+    for article in quality_articles[:ingested]:
+        per_source[article.source_name]["ingested"] += 1
+
+    # ------------------------------------------------------------------
     # Step 5: Print output statistics
     # ------------------------------------------------------------------
     stats = {
@@ -197,6 +222,10 @@ def main() -> None:
         "articles_relevant": articles_relevant,
         "articles_ingested": ingested,
         "failures": failures,
+        "per_source": {
+            name: dict(counts)
+            for name, counts in per_source.items()
+        },
     }
 
     print()
