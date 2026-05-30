@@ -22,11 +22,16 @@ DEEPSEEK_MODEL = "deepseek-chat"
 MAX_ARTICLES_PER_BATCH = 50
 
 SYSTEM_PROMPT = (
-    "You are an AI news filter. For each article below, determine if it "
-    "is relevant to: AI architecture, large language models, AI agents, "
-    "open-source AI, or AI engineering paradigms. If relevant, generate a "
-    "2-3 sentence Chinese summary. "
-    "Return a JSON array of {relevant: bool, ai_summary: string}."
+    "You are an AI news filter. For each article below:\n"
+    "1. Classify its content type:\n"
+    '   - "article": substantive blog, news, research write-up -- the target\n'
+    '   - "discussion": HN thread, Reddit post, forum -- no original write-up\n'
+    '   - "link_only": just points to external URL with no useful summary\n'
+    '   - "low_quality": requires JS, paywall, just metadata or bibtex\n'
+    "2. Determine if it is relevant to: AI architecture, large language models, "
+    "AI agents, open-source AI, or AI engineering paradigms.\n"
+    "3. If relevant, generate a 2-3 sentence Chinese summary.\n"
+    'Return a JSON array of {{relevant: bool, ai_summary: string, content_type: string}}.\n'
     "Always return valid JSON, one object per input article in the same order."
 )
 
@@ -34,8 +39,8 @@ SYSTEM_PROMPT = (
 def _call_deepseek(articles: list[Article]) -> list[dict[str, Any]] | None:
     """Send a batch of articles to DeepSeek for filtering.
 
-    Returns a list of dicts with ``relevant`` and ``ai_summary`` keys,
-    or *None* on failure.
+    Returns a list of dicts with ``relevant``, ``ai_summary``, and
+    ``content_type`` keys, or *None* on failure.
     """
     api_key = os.environ.get("DEEPSEEK_API_KEY")
     if not api_key:
@@ -101,8 +106,10 @@ def filter_articles(articles: list[Article]) -> list[Article]:
     """Filter and summarize articles using DeepSeek API.
 
     Articles are processed in batches of *MAX_ARTICLES_PER_BATCH*.
-    Each article is updated in-place with ``relevant`` and ``ai_summary``.
-    Only articles deemed relevant are returned.
+    Each article is updated in-place with ``relevant``, ``ai_summary``,
+    and ``content_type``.
+    Only articles deemed relevant AND classified as "article" content type
+    are returned.
     """
     if not articles:
         return []
@@ -127,11 +134,12 @@ def filter_articles(articles: list[Article]) -> list[Article]:
         for article, result in zip(batch, results):
             article.relevant = bool(result.get("relevant", False))
             article.ai_summary = result.get("ai_summary", "")
-            if article.relevant:
+            article.content_type = result.get("content_type", None)
+            if article.relevant and article.content_type == "article":
                 relevant_articles.append(article)
 
     logger.info(
-        "LLM filter: %d relevant out of %d articles",
+        "LLM filter: %d relevant+article out of %d articles",
         len(relevant_articles),
         len(articles),
     )

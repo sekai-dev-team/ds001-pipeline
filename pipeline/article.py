@@ -18,6 +18,7 @@ class Article:
     ai_summary: str = ""  # set by LLM filter (2-3 sentences, Chinese)
     fulltext: Optional[str] = None  # set by fulltext extraction (Step 3.5)
     has_fulltext: bool = False  # whether fulltext extraction succeeded
+    content_type: Optional[str] = None  # set by LLM filter: article | discussion | link_only | low_quality
 
     def to_dict(self) -> dict:
         return asdict(self)

@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from pipeline.article import Article
 from pipeline.sources import fetch_all, all_sources
 from pipeline.llm_filter import filter_articles
-from pipeline.fulltext import fetch_fulltext
+from pipeline.fulltext import fetch_fulltext, url_pattern_hint
 from pipeline.knowledge_mcp import write_notes
 
 logging.basicConfig(
@@ -121,14 +121,60 @@ def main() -> None:
     )
 
     # ------------------------------------------------------------------
+    # Step 3.75: Quality filtering (post-extraction thresholds)
+    # ------------------------------------------------------------------
+    quality_articles: list[Article] = []
+    quality_rejected = 0
+    MIN_FULLTEXT_CHARS = 800
+    MIN_SUMMARY_CHARS = 200
+
+    for article in relevant_articles:
+        url_hint = url_pattern_hint(article.url)
+
+        if article.has_fulltext:
+            if article.fulltext and len(article.fulltext) >= MIN_FULLTEXT_CHARS:
+                quality_articles.append(article)
+            else:
+                text_len = len(article.fulltext) if article.fulltext else 0
+                logger.warning(
+                    "Quality reject: %s (fulltext too short: %d chars, min %d; url_hint=%s)",
+                    article.title, text_len, MIN_FULLTEXT_CHARS, url_hint,
+                )
+                quality_rejected += 1
+        else:
+            # Tweets use RSS summary as the acceptable fallback content
+            # (nitter pages are JS-rendered, so fulltext extraction is skipped)
+            if url_hint == "tweet":
+                quality_articles.append(article)
+                logger.debug(
+                    "Tweet fallback accepted: %s (summary=%d chars; url_hint=%s)",
+                    article.title, len(article.summary) if article.summary else 0, url_hint,
+                )
+            elif article.summary and len(article.summary) >= MIN_SUMMARY_CHARS:
+                quality_articles.append(article)
+            else:
+                summary_len = len(article.summary) if article.summary else 0
+                logger.warning(
+                    "Quality reject: %s (no fulltext, summary too short: %d chars, min %d; url_hint=%s)",
+                    article.title, summary_len, MIN_SUMMARY_CHARS, url_hint,
+                )
+                quality_rejected += 1
+
+    logger.info(
+        "Quality filter: %d passed, %d rejected (min %d chars fulltext / %d chars summary)",
+        len(quality_articles), quality_rejected,
+        MIN_FULLTEXT_CHARS, MIN_SUMMARY_CHARS,
+    )
+
+    # ------------------------------------------------------------------
     # Step 4: Write to knowledge-mcp
     # ------------------------------------------------------------------
     ingested, attempted = 0, 0
-    if relevant_articles:
-        ingested, attempted = write_notes(relevant_articles)
+    if quality_articles:
+        ingested, attempted = write_notes(quality_articles)
         logger.info("Ingested %d/%d notes into knowledge-mcp", ingested, attempted)
     else:
-        logger.info("No relevant articles to ingest")
+        logger.info("No quality-passing articles to ingest")
 
     # ------------------------------------------------------------------
     # Step 5: Print output statistics
