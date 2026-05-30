@@ -23,11 +23,13 @@ _INITIALIZED = False
 
 def _make_note_content(article: Article) -> str:
     """Build the episodic note markdown body."""
+    original_text = article.fulltext or article.summary
     return (
         f"# {article.title}\n\n"
         f"**来源:** {article.source_name} | **摄入时间:** "
         f"{datetime.now(timezone.utc).isoformat()}\n\n"
-        f"## 摘要\n{article.ai_summary}\n"
+        f"## 摘要\n{article.ai_summary}\n\n"
+        f"## 原文\n{original_text}\n"
     )
 
 
@@ -111,6 +113,7 @@ def write_note(article: Article) -> bool:
                 "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
                 "ingested_at": now_iso,
                 "source_url": article.url,
+                "has_fulltext": article.has_fulltext,
             },
             "force": True,
         },

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
+from typing import Optional
 
 
 @dataclass
@@ -15,6 +16,8 @@ class Article:
     published_at: str  # ISO 8601
     relevant: bool = False  # set by LLM filter
     ai_summary: str = ""  # set by LLM filter (2-3 sentences, Chinese)
+    fulltext: Optional[str] = None  # set by fulltext extraction (Step 3.5)
+    has_fulltext: bool = False  # whether fulltext extraction succeeded
 
     def to_dict(self) -> dict:
         return asdict(self)

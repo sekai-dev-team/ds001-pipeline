@@ -127,15 +127,41 @@ def all_sources() -> list[tuple[str, SourceFunc]]:
     return list(_source_registry)
 
 
-# Track RSSHub Twitter warning so it only appears once
-_rsshub_twitter_warned = False
+# Nitter instances for X/Twitter RSS (primary + fallbacks)
+NITTER_INSTANCES = [
+    "https://nitter.net",
+    "https://nitter.privacydev.net",
+    "https://nitter.poast.org",
+]
 
 
-def _warn_rsshub_twitter() -> None:
-    global _rsshub_twitter_warned  # noqa: PLW0603
-    if not _rsshub_twitter_warned:
-        logger.warning("RSSHub Twitter routes unavailable, skipping 4 X sources")
-        _rsshub_twitter_warned = True
+def _fetch_nitter_feed(handle: str, source_name: str, source_tag: str) -> list[Article]:
+    """Fetch tweets for a given X/Twitter handle via Nitter RSS.
+
+    Tries each Nitter instance in order. Returns articles on the first
+    successful response, or an empty list if all instances fail.
+    """
+    for instance in NITTER_INSTANCES:
+        url = f"{instance}/{handle}/rss"
+        logger.debug("Trying Nitter feed: %s", url)
+        feed = _fetch_feed(url)
+        if feed is not None:
+            articles: list[Article] = []
+            for entry in feed.entries:
+                article = _rss_entry_to_article(
+                    entry, source_name=source_name, source_tag=source_tag
+                )
+                if article is not None:
+                    articles.append(article)
+            logger.info(
+                "Nitter feed '%s' (%s): %d articles",
+                handle, instance, len(articles),
+            )
+            return articles
+        logger.warning("Nitter instance %s failed for %s, trying next", instance, handle)
+
+    logger.warning("All Nitter instances failed for %s — source unavailable", handle)
+    return []
 
 
 # ====================== 1. Anthropic Research Blog ==========================
@@ -229,35 +255,47 @@ def _fetch_deepseek_releases() -> list[Article]:
 
 _register("DeepSeek Releases", _fetch_deepseek_releases)
 
-# ====================== 7. @_akhaliq (RSSHub X/Twitter) ===================
+# ====================== 7. @_akhaliq (Nitter RSS) ===========================
 
 def _fetch_akhaliq() -> list[Article]:
-    _warn_rsshub_twitter()
-    return []
+    return _fetch_nitter_feed(
+        "_akhaliq",
+        source_name="@_akhaliq",
+        source_tag="source/akhaliq",
+    )
 
 _register("@_akhaliq", _fetch_akhaliq)
 
-# ====================== 8. @AnthropicAI (RSSHub X/Twitter) ================
+# ====================== 8. @AnthropicAI (Nitter RSS) ========================
 
 def _fetch_anthropic_twitter() -> list[Article]:
-    _warn_rsshub_twitter()
-    return []
+    return _fetch_nitter_feed(
+        "AnthropicAI",
+        source_name="@AnthropicAI",
+        source_tag="source/anthropic-twitter",
+    )
 
 _register("@AnthropicAI", _fetch_anthropic_twitter)
 
-# ====================== 9. @hwchase17 (RSSHub X/Twitter) ==================
+# ====================== 9. @hwchase17 (Nitter RSS) ==========================
 
 def _fetch_hwchase17() -> list[Article]:
-    _warn_rsshub_twitter()
-    return []
+    return _fetch_nitter_feed(
+        "hwchase17",
+        source_name="@hwchase17",
+        source_tag="source/hwchase17",
+    )
 
 _register("@hwchase17", _fetch_hwchase17)
 
-# ====================== 10. @steipete (RSSHub X/Twitter) ==================
+# ====================== 10. @steipete (Nitter RSS) ==========================
 
 def _fetch_steipete() -> list[Article]:
-    _warn_rsshub_twitter()
-    return []
+    return _fetch_nitter_feed(
+        "steipete",
+        source_name="@steipete",
+        source_tag="source/steipete",
+    )
 
 _register("@steipete", _fetch_steipete)
 

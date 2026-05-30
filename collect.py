@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from pipeline.article import Article
 from pipeline.sources import fetch_all, all_sources
 from pipeline.llm_filter import filter_articles
+from pipeline.fulltext import fetch_fulltext
 from pipeline.knowledge_mcp import write_notes
 
 logging.basicConfig(
@@ -97,6 +98,27 @@ def main() -> None:
     relevant_articles = filter_articles(unique_articles)
     articles_relevant = len(relevant_articles)
     logger.info("LLM filter: %d relevant articles", articles_relevant)
+
+    # ------------------------------------------------------------------
+    # Step 3.5: Fulltext extraction
+    # ------------------------------------------------------------------
+    fulltext_success = 0
+    for article in relevant_articles:
+        result = fetch_fulltext(article.url)
+        if result is not None:
+            article.fulltext = result
+            article.has_fulltext = True
+            fulltext_success += 1
+        else:
+            article.has_fulltext = False
+            logger.warning("Fulltext extraction failed for: %s", article.url)
+
+    total_relevant = len(relevant_articles)
+    logger.info(
+        "Fulltext: %d/%d extracted successfully",
+        fulltext_success,
+        total_relevant,
+    )
 
     # ------------------------------------------------------------------
     # Step 4: Write to knowledge-mcp
