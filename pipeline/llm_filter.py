@@ -25,11 +25,15 @@ SYSTEM_PROMPT = (
     "You are an AI news filter. For each article below:\n"
     "1. Classify its content type:\n"
     '   - "article": substantive blog, news, research write-up -- the target\n'
-    '   - "discussion": HN thread, Reddit post, forum -- no original write-up\n'
+    '   - "discussion": HN thread, Reddit post, forum -- may still be relevant\n'
+    "     if it contains substantive professional insight (not just jokes,\n"
+    "     one-liners, or vote counts)\n"
     '   - "link_only": just points to external URL with no useful summary\n'
     '   - "low_quality": requires JS, paywall, just metadata or bibtex\n'
     "2. Determine if it is relevant to: AI architecture, large language models, "
     "AI agents, open-source AI, or AI engineering paradigms.\n"
+    "   Both ``article`` and ``discussion`` content types can be relevant.\n"
+    "   Only ``link_only`` and ``low_quality`` should be rejected outright.\n"
     "3. If relevant, generate a 2-3 sentence Chinese summary.\n"
     'Return a JSON array of {{relevant: bool, ai_summary: string, content_type: string}}.\n'
     "Always return valid JSON, one object per input article in the same order."
@@ -108,8 +112,8 @@ def filter_articles(articles: list[Article]) -> list[Article]:
     Articles are processed in batches of *MAX_ARTICLES_PER_BATCH*.
     Each article is updated in-place with ``relevant``, ``ai_summary``,
     and ``content_type``.
-    Only articles deemed relevant AND classified as "article" content type
-    are returned.
+    Only articles deemed relevant AND classified as "article" or "discussion"
+    content type are returned. ``link_only`` and ``low_quality`` are rejected.
     """
     if not articles:
         return []
@@ -135,11 +139,11 @@ def filter_articles(articles: list[Article]) -> list[Article]:
             article.relevant = bool(result.get("relevant", False))
             article.ai_summary = result.get("ai_summary", "")
             article.content_type = result.get("content_type", None)
-            if article.relevant and article.content_type == "article":
+            if article.relevant and article.content_type in ("article", "discussion"):
                 relevant_articles.append(article)
 
     logger.info(
-        "LLM filter: %d relevant+article out of %d articles",
+        "LLM filter: %d relevant+article/discussion out of %d articles",
         len(relevant_articles),
         len(articles),
     )

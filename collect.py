@@ -126,19 +126,25 @@ def main() -> None:
     quality_articles: list[Article] = []
     quality_rejected = 0
     MIN_FULLTEXT_CHARS = 800
+    MIN_DISCUSSION_FULLTEXT_CHARS = 400
     MIN_SUMMARY_CHARS = 200
 
     for article in relevant_articles:
         url_hint = url_pattern_hint(article.url)
 
         if article.has_fulltext:
-            if article.fulltext and len(article.fulltext) >= MIN_FULLTEXT_CHARS:
+            min_chars = (
+                MIN_DISCUSSION_FULLTEXT_CHARS
+                if article.content_type == "discussion"
+                else MIN_FULLTEXT_CHARS
+            )
+            if article.fulltext and len(article.fulltext) >= min_chars:
                 quality_articles.append(article)
             else:
                 text_len = len(article.fulltext) if article.fulltext else 0
                 logger.warning(
-                    "Quality reject: %s (fulltext too short: %d chars, min %d; url_hint=%s)",
-                    article.title, text_len, MIN_FULLTEXT_CHARS, url_hint,
+                    "Quality reject: %s (fulltext too short: %d chars, min %d; url_hint=%s, content_type=%s)",
+                    article.title, text_len, min_chars, url_hint, article.content_type,
                 )
                 quality_rejected += 1
         else:
@@ -161,9 +167,10 @@ def main() -> None:
                 quality_rejected += 1
 
     logger.info(
-        "Quality filter: %d passed, %d rejected (min %d chars fulltext / %d chars summary)",
+        "Quality filter: %d passed, %d rejected (min %d chars fulltext / "
+        "%d chars discussion / %d chars summary)",
         len(quality_articles), quality_rejected,
-        MIN_FULLTEXT_CHARS, MIN_SUMMARY_CHARS,
+        MIN_FULLTEXT_CHARS, MIN_DISCUSSION_FULLTEXT_CHARS, MIN_SUMMARY_CHARS,
     )
 
     # ------------------------------------------------------------------

@@ -3,7 +3,8 @@
 Primary: trafilatura (extract markdown from HTML).
 Fallback: readability-lxml + html2text.
 arXiv: dedicated API for paper abstracts.
-Returns None if all methods fail (or URL is a known discussion site).
+HN: Firebase API for discussion threads.
+Reddit: .json API for discussion threads.
 """
 
 from __future__ import annotations
@@ -23,8 +24,9 @@ logger = logging.getLogger(__name__)
 def url_pattern_hint(url: str) -> str:
     """Classify a URL into a content-type hint for extraction strategy.
 
-    Returns one of: ``"canonical_article"``, ``"discussion_site"``,
-    ``"arxiv_paper"``, ``"tweet"``.
+    Returns one of: ``"canonical_article"``, ``"hn_discussion"``,
+    ``"reddit_discussion"``, ``"discussion_site"``, ``"arxiv_paper"``,
+    ``"tweet"``.
     """
     if not url:
         return "canonical_article"
@@ -37,13 +39,177 @@ def url_pattern_hint(url: str) -> str:
     if re.search(r"nitter\.net/\w+/status/", url):
         return "tweet"
 
-    # Discussion sites — no original write-up
-    if "news.ycombinator.com/item" in url or "old.reddit.com" in url:
-        return "discussion_site"
+    # Discussion sites
+    if "news.ycombinator.com/item" in url:
+        return "hn_discussion"
+    if "old.reddit.com" in url:
+        return "reddit_discussion"
     if ".mastodon." in url or "mastodon.social" in url:
         return "discussion_site"
 
     return "canonical_article"
+
+
+# ---------------------------------------------------------------------------
+# Discussion site extraction
+# ---------------------------------------------------------------------------
+
+
+def _fetch_hn_discussion(url: str) -> Optional[str]:
+    """Fetch HN discussion via Firebase API (public, no auth).
+
+    Extracts the item ID from a ``news.ycombinator.com/item?id=XXXXX``
+    URL, fetches the post metadata via the Firebase API, then fetches
+    the top-level comments (up to 30) individually.
+
+    Returns markdown-formatted content or *None* on failure.
+    """
+    match = re.search(r"news\.ycombinator\.com/item\?id=(\d+)", url)
+    if not match:
+        return None
+
+    item_id = match.group(1)
+    api_url = f"https://hacker-news.firebaseio.com/v0/item/{item_id}.json"
+
+    try:
+        import requests as req_lib
+
+        resp = req_lib.get(api_url, timeout=30)
+        resp.raise_for_status()
+        item = resp.json()
+        if not item:
+            return None
+
+        title = item.get("title", "HN Discussion")
+        text = item.get("text", "")
+        kids = item.get("kids", [])
+
+        lines = [f"# {title}"]
+        if text:
+            lines.append("")
+            lines.append(text)
+
+        if kids:
+            lines.append("")
+            lines.append("## Top Comments")
+            for cid in kids[:30]:
+                try:
+                    cresp = req_lib.get(
+                        f"https://hacker-news.firebaseio.com/v0/item/{cid}.json",
+                        timeout=15,
+                    )
+                    cresp.raise_for_status()
+                    comment = cresp.json()
+                    if comment and comment.get("text"):
+                        author = comment.get("by", "anonymous")
+                        lines.append(f"**{author}:** {comment['text']}\n")
+                except Exception:
+                    logger.debug("Failed to fetch HN comment %s", cid)
+                    continue
+
+        result = "\n".join(lines).strip()
+        return result if result else None
+
+    except Exception:
+        logger.exception("HN API request failed for: %s", url)
+        return None
+
+
+def _fetch_reddit_discussion(url: str) -> Optional[str]:
+    """Fetch Reddit discussion via the public .json API.
+
+    Appends ``.json`` to the Reddit URL, parses the post metadata and
+    threaded comments (up to 3 levels deep, top 20 comments).
+
+    Requires a ``User-Agent`` header (Reddit policy).
+
+    Returns markdown-formatted content or *None* on failure.
+    """
+    # Normalise: strip trailing slash, append .json
+    json_url = url.rstrip("/") + ".json"
+
+    try:
+        import requests as req_lib
+
+        resp = req_lib.get(
+            json_url,
+            timeout=30,
+            headers={"User-Agent": "DS-001-Pipeline/0.2"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        if not isinstance(data, list) or len(data) < 2:
+            return None
+
+        post_data = data[0]["data"]["children"][0]["data"]
+        title = post_data.get("title", "Reddit Discussion")
+        selftext = post_data.get("selftext", "")
+
+        lines = [f"# {title}"]
+        if selftext:
+            lines.append("")
+            lines.append(selftext)
+
+        comments_data = data[1]["data"]["children"]
+
+        def _walk_reddit_comments(
+            children: list,
+            depth: int = 0,
+            max_depth: int = 3,
+            max_comments: int = 20,
+        ) -> list[str]:
+            """Recursively format Reddit comments as markdown."""
+            result: list[str] = []
+            count = 0
+            for child in children:
+                if count >= max_comments:
+                    break
+                if child.get("kind") != "t1":
+                    continue
+                cdata = child.get("data", {})
+                author = cdata.get("author", "[deleted]")
+                body = cdata.get("body", "")
+                if not body:
+                    continue
+                indent = "  " * depth
+                result.append(f"{indent}**{author}:** {body}\n")
+                count += 1
+
+                replies = cdata.get("replies", {})
+                if depth < max_depth and isinstance(replies, dict):
+                    reply_children = (
+                        replies.get("data", {}).get("children", [])
+                    )
+                    result.extend(
+                        _walk_reddit_comments(
+                            reply_children,
+                            depth + 1,
+                            max_depth,
+                            max_comments - count,
+                        )
+                    )
+                    # Re-count after recursion
+                    count = sum(
+                        1
+                        for r in result
+                        if r.lstrip().startswith("**")
+                    )
+
+            return result
+
+        formatted = _walk_reddit_comments(comments_data)
+        if formatted:
+            lines.append("")
+            lines.append("## Comments")
+            lines.extend(formatted)
+
+        result = "\n".join(lines).strip()
+        return result if result else None
+
+    except Exception:
+        logger.exception("Reddit API request failed for: %s", url)
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -218,6 +384,8 @@ def fetch_fulltext(url: str, timeout: int = 30) -> Optional[str]:
     Strategy is determined by :func:`url_pattern_hint`:
 
     - ``arxiv_paper``  →  arXiv API (returns abstract as markdown)
+    - ``hn_discussion``  →  HN Firebase API (post + top 30 comments)
+    - ``reddit_discussion``  →  Reddit .json API (post + threaded comments)
     - ``discussion_site``  →  skip (return *None*)
     - ``tweet``  →  skip (return *None*; RSS summary is the fallback)
     - ``canonical_article``  →  trafilatura, then readability-lxml
@@ -241,7 +409,25 @@ def fetch_fulltext(url: str, timeout: int = 30) -> Optional[str]:
         logger.warning("arXiv API failed for: %s", url)
         return None
 
-    # Strategy: discussion sites / tweets -> skip extraction
+    # Strategy: HN discussions -> Firebase API
+    if hint == "hn_discussion":
+        result = _fetch_hn_discussion(url)
+        if result is not None:
+            logger.debug("HN API succeeded for: %s", url)
+            return result
+        logger.warning("HN API failed for: %s", url)
+        return None
+
+    # Strategy: Reddit discussions -> .json API
+    if hint == "reddit_discussion":
+        result = _fetch_reddit_discussion(url)
+        if result is not None:
+            logger.debug("Reddit API succeeded for: %s", url)
+            return result
+        logger.warning("Reddit API failed for: %s", url)
+        return None
+
+    # Strategy: discussion sites (Mastodon etc.) / tweets -> skip extraction
     if hint in ("discussion_site", "tweet"):
         logger.debug("Skipping extraction for %s (hint=%s)", url, hint)
         return None
