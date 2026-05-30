@@ -7,6 +7,7 @@ to create episodic knowledge notes.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -24,15 +25,47 @@ RETRY_DELAY = 5  # seconds between retries
 _INITIALIZED = False
 
 
+def _clean_nitter_html(text: str) -> str:
+    """Strip HTML from Nitter RSS content and convert nitter.net links to x.com.
+
+    * ``<br>`` / ``<br />`` → newline
+    * ``<p>`` / ``</p>`` → removed
+    * ``<a href="URL">text</a>`` → ``text (URL)``
+    * ``<img …>`` → removed entirely
+    * ``nitter.net`` → ``x.com`` in any remaining links
+    * All other HTML tags are stripped.
+    """
+    if not text:
+        return text
+    # 1. Line breaks from <br>
+    text = re.sub(r"<br\s*/?>", "\n", text)
+    # 2. Remove <p> and </p> tags
+    text = re.sub(r"</?p\s*/?>", "", text)
+    # 3. Convert <a href="URL">text</a> → text (URL)
+    text = re.sub(
+        r'<a\s+href="([^"]*)"[^>]*>([^<]*)</a>',
+        r"\2 (\1)",
+        text,
+    )
+    # 4. Strip <img …> tags entirely (nitter.net/pic/ images are unrecoverable)
+    text = re.sub(r"<img[^>]*>", "", text)
+    # 5. Convert nitter.net → x.com in any remaining links
+    text = re.sub(r"https?://nitter\.net/", "https://x.com/", text)
+    # 6. Remove any remaining HTML tags
+    text = re.sub(r"<[^>]+>", "", text)
+    return text
+
+
 def _make_note_content(article: Article) -> str:
     """Build the episodic note markdown body."""
     original_text = article.fulltext or article.summary
+    cleaned_text = _clean_nitter_html(original_text or "")
     return (
         f"# {article.title}\n\n"
         f"**来源:** {article.source_name} | **摄入时间:** "
         f"{datetime.now(timezone.utc).isoformat()}\n\n"
         f"## 摘要\n{article.ai_summary}\n\n"
-        f"## 原文\n{original_text}\n"
+        f"## 原文\n{cleaned_text}\n"
     )
 
 

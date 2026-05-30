@@ -8,6 +8,7 @@ objects or an empty list on error.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Callable
@@ -93,6 +94,26 @@ def _within_last_24h(entry) -> bool:
     return age.total_seconds() <= 86400
 
 
+def _nitter_to_x_url(url: str) -> str:
+    """Convert a nitter.net URL to the equivalent x.com URL.
+
+    Pattern: ``https://nitter.net/username/status/123456#m``
+    → ``https://x.com/username/status/123456``
+
+    Also handles plain profile links: ``https://nitter.net/username``
+    → ``https://x.com/username``
+    """
+    # Specific: status links with optional fragment (#m, etc.)
+    url = re.sub(
+        r"^https?://nitter\.net/([^/]+)/status/(\d+)(?:#.*)?$",
+        r"https://x.com/\1/status/\2",
+        url,
+    )
+    # Catch-all: any other nitter.net path → same path on x.com
+    url = re.sub(r"^https?://nitter\.net/", "https://x.com/", url)
+    return url
+
+
 def _rss_entry_to_article(entry, *, source_name: str, source_tag: str) -> Article | None:
     """Convert a feedparser entry to an Article, applying date filter.
 
@@ -152,6 +173,9 @@ def _fetch_nitter_feed(handle: str, source_name: str, source_tag: str) -> list[A
                     entry, source_name=source_name, source_tag=source_tag
                 )
                 if article is not None:
+                    # Convert nitter.net → x.com so source_url in frontmatter
+                    # points to a live Twitter/X link instead of a dead proxy.
+                    article.url = _nitter_to_x_url(article.url)
                     articles.append(article)
             logger.info(
                 "Nitter feed '%s' (%s): %d articles",
