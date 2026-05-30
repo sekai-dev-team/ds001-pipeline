@@ -76,12 +76,14 @@ def _summary_from_entry(entry) -> str:
     return ""
 
 
-def _within_last_24h(entry) -> bool:
-    """Check if a feed entry was published within the last 24 hours.
+def _within_last_24h(entry, max_age_hours: int = 24) -> bool:
+    """Check if a feed entry was published within *max_age_hours*.
 
     Uses ``published_parsed``, falling back to ``updated_parsed``.
     Returns *True* if no date info is available (better to include than
     silently drop articles with missing metadata).
+
+    Pass ``max_age_hours=48`` for slow-publishing sources (HF Blog, etc.).
     """
     parsed = (
         getattr(entry, "published_parsed", None)
@@ -91,7 +93,7 @@ def _within_last_24h(entry) -> bool:
         return True
     pub_time = datetime(*parsed[:6], tzinfo=timezone.utc)
     age = datetime.now(timezone.utc) - pub_time
-    return age.total_seconds() <= 86400
+    return age.total_seconds() <= max_age_hours * 3600
 
 
 def _nitter_to_x_url(url: str) -> str:
@@ -114,12 +116,12 @@ def _nitter_to_x_url(url: str) -> str:
     return url
 
 
-def _rss_entry_to_article(entry, *, source_name: str, source_tag: str) -> Article | None:
+def _rss_entry_to_article(entry, *, source_name: str, source_tag: str, max_age_hours: int = 24) -> Article | None:
     """Convert a feedparser entry to an Article, applying date filter.
 
-    Returns *None* if the article is older than 24 hours.
+    Returns *None* if the article is older than *max_age_hours*.
     """
-    if not _within_last_24h(entry):
+    if not _within_last_24h(entry, max_age_hours=max_age_hours):
         return None
     return Article(
         title=entry.get("title", ""),
@@ -229,7 +231,8 @@ def _fetch_huggingface() -> list[Article]:
     articles: list[Article] = []
     for entry in feed.entries:
         article = _rss_entry_to_article(
-            entry, source_name="Hugging Face Blog", source_tag="source/huggingface"
+            entry, source_name="Hugging Face Blog", source_tag="source/huggingface",
+            max_age_hours=48,
         )
         if article is not None:
             articles.append(article)
@@ -252,34 +255,25 @@ _register("LangChain Blog", _fetch_langchain)
 # ====================== 5. Qwen GitHub Releases ============================
 
 def _fetch_qwen_releases() -> list[Article]:
-    feed = _fetch_feed("https://github.com/QwenLM/Qwen/releases.atom")
-    if feed is None:
-        return []
-    articles: list[Article] = []
-    for entry in feed.entries:
-        article = _rss_entry_to_article(
-            entry, source_name="Qwen Releases", source_tag="source/qwen"
-        )
-        if article is not None:
-            articles.append(article)
-    return articles
+    logger.warning(
+        "Qwen: GitHub Releases feed returns 0 entries "
+        "(QwenLM/Qwen has no releases). Qwen papers are covered by the main arXiv source "
+        "(cat:cs.AI+OR+cat:cs.CL). Blog at qwen.ai/research has no RSS feed."
+    )
+    return []
 
 _register("Qwen Releases", _fetch_qwen_releases)
 
 # ====================== 6. DeepSeek GitHub Releases ========================
 
 def _fetch_deepseek_releases() -> list[Article]:
-    feed = _fetch_feed("https://github.com/deepseek-ai/DeepSeek-V3/releases.atom")
-    if feed is None:
-        return []
-    articles: list[Article] = []
-    for entry in feed.entries:
-        article = _rss_entry_to_article(
-            entry, source_name="DeepSeek Releases", source_tag="source/deepseek"
-        )
-        if article is not None:
-            articles.append(article)
-    return articles
+    logger.warning(
+        "DeepSeek: GitHub Releases feed has no recent content "
+        "(deepseek-ai/DeepSeek-V3/releases only has v1.0.0 from 2025-06-27). "
+        "DeepSeek papers are covered by the main arXiv source "
+        "(cat:cs.AI+OR+cat:cs.CL). News at api-docs.deepseek.com/news has no RSS feed."
+    )
+    return []
 
 _register("DeepSeek Releases", _fetch_deepseek_releases)
 
