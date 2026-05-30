@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 import feedparser
@@ -75,6 +75,41 @@ def _summary_from_entry(entry) -> str:
     return ""
 
 
+def _within_last_24h(entry) -> bool:
+    """Check if a feed entry was published within the last 24 hours.
+
+    Uses ``published_parsed``, falling back to ``updated_parsed``.
+    Returns *True* if no date info is available (better to include than
+    silently drop articles with missing metadata).
+    """
+    parsed = (
+        getattr(entry, "published_parsed", None)
+        or getattr(entry, "updated_parsed", None)
+    )
+    if parsed is None:
+        return True
+    pub_time = datetime(*parsed[:6], tzinfo=timezone.utc)
+    age = datetime.now(timezone.utc) - pub_time
+    return age.total_seconds() <= 86400
+
+
+def _rss_entry_to_article(entry, *, source_name: str, source_tag: str) -> Article | None:
+    """Convert a feedparser entry to an Article, applying date filter.
+
+    Returns *None* if the article is older than 24 hours.
+    """
+    if not _within_last_24h(entry):
+        return None
+    return Article(
+        title=entry.get("title", ""),
+        url=entry.get("link", ""),
+        source_name=source_name,
+        source_tag=source_tag,
+        summary=_summary_from_entry(entry),
+        published_at=_iso_date(entry.get("published_parsed")),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Source registry
 # ---------------------------------------------------------------------------
@@ -92,25 +127,25 @@ def all_sources() -> list[tuple[str, SourceFunc]]:
     return list(_source_registry)
 
 
+# Track RSSHub Twitter warning so it only appears once
+_rsshub_twitter_warned = False
+
+
+def _warn_rsshub_twitter() -> None:
+    global _rsshub_twitter_warned  # noqa: PLW0603
+    if not _rsshub_twitter_warned:
+        logger.warning("RSSHub Twitter routes unavailable, skipping 4 X sources")
+        _rsshub_twitter_warned = True
+
+
 # ====================== 1. Anthropic Research Blog ==========================
 
 def _fetch_anthropic() -> list[Article]:
-    feed = _fetch_feed("https://www.anthropic.com/research/feed")
-    if feed is None:
-        return []
-    articles: list[Article] = []
-    for entry in feed.entries:
-        articles.append(
-            Article(
-                title=entry.get("title", ""),
-                url=entry.get("link", ""),
-                source_name="Anthropic Blog",
-                source_tag="source/anthropic",
-                summary=_summary_from_entry(entry),
-                published_at=_iso_date(entry.get("published_parsed")),
-            )
-        )
-    return articles
+    logger.warning(
+        "Anthropic Blog: no RSS feed available "
+        "(all known feed URLs — /research/feed, /feed, /rss — return 404)"
+    )
+    return []
 
 _register("Anthropic Blog", _fetch_anthropic)
 
@@ -122,16 +157,11 @@ def _fetch_deepmind() -> list[Article]:
         return []
     articles: list[Article] = []
     for entry in feed.entries:
-        articles.append(
-            Article(
-                title=entry.get("title", ""),
-                url=entry.get("link", ""),
-                source_name="DeepMind Blog",
-                source_tag="source/deepmind",
-                summary=_summary_from_entry(entry),
-                published_at=_iso_date(entry.get("published_parsed")),
-            )
+        article = _rss_entry_to_article(
+            entry, source_name="DeepMind Blog", source_tag="source/deepmind"
         )
+        if article is not None:
+            articles.append(article)
     return articles
 
 _register("DeepMind Blog", _fetch_deepmind)
@@ -144,16 +174,11 @@ def _fetch_huggingface() -> list[Article]:
         return []
     articles: list[Article] = []
     for entry in feed.entries:
-        articles.append(
-            Article(
-                title=entry.get("title", ""),
-                url=entry.get("link", ""),
-                source_name="Hugging Face Blog",
-                source_tag="source/huggingface",
-                summary=_summary_from_entry(entry),
-                published_at=_iso_date(entry.get("published_parsed")),
-            )
+        article = _rss_entry_to_article(
+            entry, source_name="Hugging Face Blog", source_tag="source/huggingface"
         )
+        if article is not None:
+            articles.append(article)
     return articles
 
 _register("Hugging Face Blog", _fetch_huggingface)
@@ -161,22 +186,12 @@ _register("Hugging Face Blog", _fetch_huggingface)
 # ====================== 4. LangChain Engineering Blog ======================
 
 def _fetch_langchain() -> list[Article]:
-    feed = _fetch_feed("https://blog.langchain.dev/rss/")
-    if feed is None:
-        return []
-    articles: list[Article] = []
-    for entry in feed.entries:
-        articles.append(
-            Article(
-                title=entry.get("title", ""),
-                url=entry.get("link", ""),
-                source_name="LangChain Blog",
-                source_tag="source/langchain",
-                summary=_summary_from_entry(entry),
-                published_at=_iso_date(entry.get("published_parsed")),
-            )
-        )
-    return articles
+    logger.warning(
+        "LangChain Blog: RSS feed unavailable "
+        "(blog.langchain.dev/rss/ permanently redirects to www.langchain.com/blog HTML page; "
+        "no RSS feed found on the new site)"
+    )
+    return []
 
 _register("LangChain Blog", _fetch_langchain)
 
@@ -188,16 +203,11 @@ def _fetch_qwen_releases() -> list[Article]:
         return []
     articles: list[Article] = []
     for entry in feed.entries:
-        articles.append(
-            Article(
-                title=entry.get("title", ""),
-                url=entry.get("link", ""),
-                source_name="Qwen Releases",
-                source_tag="source/qwen",
-                summary=_summary_from_entry(entry),
-                published_at=_iso_date(entry.get("published_parsed")),
-            )
+        article = _rss_entry_to_article(
+            entry, source_name="Qwen Releases", source_tag="source/qwen"
         )
+        if article is not None:
+            articles.append(article)
     return articles
 
 _register("Qwen Releases", _fetch_qwen_releases)
@@ -210,16 +220,11 @@ def _fetch_deepseek_releases() -> list[Article]:
         return []
     articles: list[Article] = []
     for entry in feed.entries:
-        articles.append(
-            Article(
-                title=entry.get("title", ""),
-                url=entry.get("link", ""),
-                source_name="DeepSeek Releases",
-                source_tag="source/deepseek",
-                summary=_summary_from_entry(entry),
-                published_at=_iso_date(entry.get("published_parsed")),
-            )
+        article = _rss_entry_to_article(
+            entry, source_name="DeepSeek Releases", source_tag="source/deepseek"
         )
+        if article is not None:
+            articles.append(article)
     return articles
 
 _register("DeepSeek Releases", _fetch_deepseek_releases)
@@ -227,88 +232,32 @@ _register("DeepSeek Releases", _fetch_deepseek_releases)
 # ====================== 7. @_akhaliq (RSSHub X/Twitter) ===================
 
 def _fetch_akhaliq() -> list[Article]:
-    feed = _fetch_feed("https://rsshub.app/twitter/user/_akhaliq")
-    if feed is None:
-        return []
-    articles: list[Article] = []
-    for entry in feed.entries:
-        articles.append(
-            Article(
-                title=entry.get("title", ""),
-                url=entry.get("link", ""),
-                source_name="@_akhaliq",
-                source_tag="source/akhaliq",
-                summary=_summary_from_entry(entry),
-                published_at=_iso_date(entry.get("published_parsed")),
-            )
-        )
-    return articles
+    _warn_rsshub_twitter()
+    return []
 
 _register("@_akhaliq", _fetch_akhaliq)
 
 # ====================== 8. @AnthropicAI (RSSHub X/Twitter) ================
 
 def _fetch_anthropic_twitter() -> list[Article]:
-    feed = _fetch_feed("https://rsshub.app/twitter/user/AnthropicAI")
-    if feed is None:
-        return []
-    articles: list[Article] = []
-    for entry in feed.entries:
-        articles.append(
-            Article(
-                title=entry.get("title", ""),
-                url=entry.get("link", ""),
-                source_name="@AnthropicAI",
-                source_tag="source/anthropic-twitter",
-                summary=_summary_from_entry(entry),
-                published_at=_iso_date(entry.get("published_parsed")),
-            )
-        )
-    return articles
+    _warn_rsshub_twitter()
+    return []
 
 _register("@AnthropicAI", _fetch_anthropic_twitter)
 
 # ====================== 9. @hwchase17 (RSSHub X/Twitter) ==================
 
 def _fetch_hwchase17() -> list[Article]:
-    feed = _fetch_feed("https://rsshub.app/twitter/user/hwchase17")
-    if feed is None:
-        return []
-    articles: list[Article] = []
-    for entry in feed.entries:
-        articles.append(
-            Article(
-                title=entry.get("title", ""),
-                url=entry.get("link", ""),
-                source_name="@hwchase17",
-                source_tag="source/hwchase17",
-                summary=_summary_from_entry(entry),
-                published_at=_iso_date(entry.get("published_parsed")),
-            )
-        )
-    return articles
+    _warn_rsshub_twitter()
+    return []
 
 _register("@hwchase17", _fetch_hwchase17)
 
 # ====================== 10. @steipete (RSSHub X/Twitter) ==================
 
 def _fetch_steipete() -> list[Article]:
-    feed = _fetch_feed("https://rsshub.app/twitter/user/steipete")
-    if feed is None:
-        return []
-    articles: list[Article] = []
-    for entry in feed.entries:
-        articles.append(
-            Article(
-                title=entry.get("title", ""),
-                url=entry.get("link", ""),
-                source_name="@steipete",
-                source_tag="source/steipete",
-                summary=_summary_from_entry(entry),
-                published_at=_iso_date(entry.get("published_parsed")),
-            )
-        )
-    return articles
+    _warn_rsshub_twitter()
+    return []
 
 _register("@steipete", _fetch_steipete)
 
@@ -334,6 +283,8 @@ def _fetch_hackernews() -> list[Article]:
             if link in seen_urls:
                 continue
             seen_urls.add(link)
+            if not _within_last_24h(entry):
+                continue
             all_articles.append(
                 Article(
                     title=entry.get("title", ""),
@@ -368,6 +319,8 @@ def _fetch_arxiv() -> list[Article]:
         # arXiv links in <id> are http, prefer https
         if link.startswith("http://"):
             link = "https://" + link[7:]
+        if not _within_last_24h(entry):
+            continue
         articles.append(
             Article(
                 title=entry.get("title", "").strip().replace("\n", " "),
@@ -385,6 +338,7 @@ _register("arXiv", _fetch_arxiv)
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def fetch_source(name: str) -> list[Article]:
     """Fetch a single named source.

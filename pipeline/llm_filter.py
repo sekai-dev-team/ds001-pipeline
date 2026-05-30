@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 DEEPSEEK_MODEL = "deepseek-chat"
-MAX_ARTICLES_PER_BATCH = 20
+MAX_ARTICLES_PER_BATCH = 50
 
 SYSTEM_PROMPT = (
     "You are an AI news filter. For each article below, determine if it "
@@ -112,8 +112,13 @@ def filter_articles(articles: list[Article]) -> list[Article]:
         articles[i : i + MAX_ARTICLES_PER_BATCH]
         for i in range(0, len(articles), MAX_ARTICLES_PER_BATCH)
     ]
+    total_batches = len(batches)
 
-    for batch in batches:
+    for batch_idx, batch in enumerate(batches, 1):
+        logger.info(
+            "Filtering batch %d/%d (%d articles)...",
+            batch_idx, total_batches, len(batch),
+        )
         results = _call_deepseek(batch)
         if results is None:
             logger.warning("LLM filter failed for batch of %d articles, marking all as not relevant", len(batch))

@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 KMCP_BASE_URL = "http://knowledge-mcp:8000/mcp"
 REQUEST_TIMEOUT = 30
+_INITIALIZED = False
 
 
 def _make_note_content(article: Article) -> str:
@@ -37,6 +38,53 @@ def _rpc_payload(method: str, params: dict[str, Any]) -> dict[str, Any]:
         "method": method,
         "params": params,
     }
+
+
+def _initialize() -> bool:
+    """Send MCP initialize request to the knowledge-MCP server.
+
+    Must succeed before any ``tools/call`` requests are sent.
+    Returns ``True`` on success, ``False`` on failure.
+    """
+    global _INITIALIZED  # noqa: PLW0603
+    if _INITIALIZED:
+        return True
+
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 0,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-03-26",
+            "capabilities": {},
+            "clientInfo": {
+                "name": "ds001-pipeline",
+                "version": "0.1.0",
+            },
+        },
+    }
+
+    try:
+        resp = requests.post(
+            KMCP_BASE_URL,
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            json=payload,
+            timeout=REQUEST_TIMEOUT,
+        )
+        resp.raise_for_status()
+        result = resp.json()
+        if "error" in result:
+            logger.error("k-mcp initialize failed: %s", result["error"])
+            return False
+        _INITIALIZED = True
+        logger.info("k-mcp initialize succeeded (protocol=%s)", result.get("protocolVersion", "unknown"))
+        return True
+    except requests.exceptions.RequestException as exc:
+        logger.error("k-mcp initialize request failed: %s", exc)
+        return False
 
 
 def write_note(article: Article) -> bool:
@@ -105,6 +153,14 @@ def write_notes(articles: list[Article]) -> tuple[int, int]:
 
     Returns ``(success_count, total_count)``.
     """
+    if not articles:
+        return 0, 0
+
+    # Initialize MCP session before any tool calls
+    if not _initialize():
+        logger.error("k-mcp initialize failed, skipping all write_note calls")
+        return 0, len(articles)
+
     success = 0
     for article in articles:
         if write_note(article):
