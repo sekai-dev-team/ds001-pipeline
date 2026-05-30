@@ -205,22 +205,22 @@ def _fetch_anthropic() -> list[Article]:
 
 _register("Anthropic Blog", _fetch_anthropic)
 
-# ====================== 2. Google DeepMind Blog ============================
+# ====================== 2. Google AI Blog ============================
 
-def _fetch_deepmind() -> list[Article]:
-    feed = _fetch_feed("https://deepmind.google/blog/feed")
+def _fetch_google_ai() -> list[Article]:
+    feed = _fetch_feed("https://blog.google/innovation-and-ai/technology/ai/rss/")
     if feed is None:
         return []
     articles: list[Article] = []
     for entry in feed.entries:
         article = _rss_entry_to_article(
-            entry, source_name="DeepMind Blog", source_tag="source/deepmind"
+            entry, source_name="Google AI Blog", source_tag="source/google-ai"
         )
         if article is not None:
             articles.append(article)
     return articles
 
-_register("DeepMind Blog", _fetch_deepmind)
+_register("Google AI Blog", _fetch_google_ai)
 
 # ====================== 3. Hugging Face Blog ===============================
 
@@ -240,42 +240,90 @@ def _fetch_huggingface() -> list[Article]:
 
 _register("Hugging Face Blog", _fetch_huggingface)
 
-# ====================== 4. LangChain Engineering Blog ======================
+# ====================== 4. LangChain GitHub Releases ========================
 
 def _fetch_langchain() -> list[Article]:
-    logger.warning(
-        "LangChain Blog: RSS feed unavailable "
-        "(blog.langchain.dev/rss/ permanently redirects to www.langchain.com/blog HTML page; "
-        "no RSS feed found on the new site)"
-    )
-    return []
+    feed = _fetch_feed("https://github.com/langchain-ai/langchain/releases.atom")
+    if feed is None:
+        return []
+    articles: list[Article] = []
+    for entry in feed.entries:
+        article = _rss_entry_to_article(
+            entry,
+            source_name="LangChain Releases",
+            source_tag="source/langchain",
+        )
+        if article is not None:
+            articles.append(article)
+    return articles
 
-_register("LangChain Blog", _fetch_langchain)
+_register("LangChain Releases", _fetch_langchain)
 
-# ====================== 5. Qwen GitHub Releases ============================
+# ====================== 5. Qwen Papers (arXiv) ==============================
+
+ARXIV_QWEN_QUERY = (
+    "http://export.arxiv.org/api/query?"
+    "search_query=all:qwen"
+    "&sortBy=submittedDate&sortOrder=descending&max_results=30"
+)
+
 
 def _fetch_qwen_releases() -> list[Article]:
-    logger.warning(
-        "Qwen: GitHub Releases feed returns 0 entries "
-        "(QwenLM/Qwen has no releases). Qwen papers are covered by the main arXiv source "
-        "(cat:cs.AI+OR+cat:cs.CL). Blog at qwen.ai/research has no RSS feed."
-    )
-    return []
+    feed = _fetch_feed(ARXIV_QWEN_QUERY)
+    if feed is None:
+        return []
+    articles: list[Article] = []
+    for entry in feed.entries:
+        link = entry.get("id", "") or entry.get("link", "")
+        if link.startswith("http://"):
+            link = "https://" + link[7:]
+        # arXiv does NOT use _within_last_24h (same as main arXiv source)
+        articles.append(
+            Article(
+                title=entry.get("title", "").strip().replace("\n", " "),
+                url=link,
+                source_name="Qwen Papers (arXiv)",
+                source_tag="source/qwen",
+                summary=_summary_from_entry(entry),
+                published_at=_iso_date(entry.get("published_parsed")),
+            )
+        )
+    return articles
 
-_register("Qwen Releases", _fetch_qwen_releases)
+_register("Qwen Papers (arXiv)", _fetch_qwen_releases)
 
-# ====================== 6. DeepSeek GitHub Releases ========================
+# ====================== 6. DeepSeek Papers (arXiv) ==========================
+
+ARXIV_DEEPSEEK_QUERY = (
+    "http://export.arxiv.org/api/query?"
+    "search_query=all:deepseek"
+    "&sortBy=submittedDate&sortOrder=descending&max_results=30"
+)
+
 
 def _fetch_deepseek_releases() -> list[Article]:
-    logger.warning(
-        "DeepSeek: GitHub Releases feed has no recent content "
-        "(deepseek-ai/DeepSeek-V3/releases only has v1.0.0 from 2025-06-27). "
-        "DeepSeek papers are covered by the main arXiv source "
-        "(cat:cs.AI+OR+cat:cs.CL). News at api-docs.deepseek.com/news has no RSS feed."
-    )
-    return []
+    feed = _fetch_feed(ARXIV_DEEPSEEK_QUERY)
+    if feed is None:
+        return []
+    articles: list[Article] = []
+    for entry in feed.entries:
+        link = entry.get("id", "") or entry.get("link", "")
+        if link.startswith("http://"):
+            link = "https://" + link[7:]
+        # arXiv does NOT use _within_last_24h (same as main arXiv source)
+        articles.append(
+            Article(
+                title=entry.get("title", "").strip().replace("\n", " "),
+                url=link,
+                source_name="DeepSeek Papers (arXiv)",
+                source_tag="source/deepseek",
+                summary=_summary_from_entry(entry),
+                published_at=_iso_date(entry.get("published_parsed")),
+            )
+        )
+    return articles
 
-_register("DeepSeek Releases", _fetch_deepseek_releases)
+_register("DeepSeek Papers (arXiv)", _fetch_deepseek_releases)
 
 # ====================== 7. @_akhaliq (Nitter RSS) ===========================
 

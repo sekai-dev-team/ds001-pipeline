@@ -126,37 +126,23 @@ def main() -> None:
     # ------------------------------------------------------------------
     quality_articles: list[Article] = []
     quality_rejected = 0
-    MIN_FULLTEXT_CHARS = 800
-    MIN_DISCUSSION_FULLTEXT_CHARS = 250
-    MIN_SUMMARY_CHARS = 200
+    MIN_SUMMARY_CHARS = 50  # only reject truly empty summaries (was 200)
 
     for article in relevant_articles:
         url_hint = url_pattern_hint(article.url)
 
         if article.has_fulltext:
-            min_chars = (
-                MIN_DISCUSSION_FULLTEXT_CHARS
-                if article.content_type == "discussion"
-                else MIN_FULLTEXT_CHARS
-            )
-            if article.fulltext and len(article.fulltext) >= min_chars:
+            # Accept ALL extracted fulltext — don't reject based on length
+            if article.fulltext and len(article.fulltext.strip()) > 0:
                 quality_articles.append(article)
             else:
-                text_len = len(article.fulltext) if article.fulltext else 0
-                logger.warning(
-                    "Quality reject: %s (fulltext too short: %d chars, min %d; url_hint=%s, content_type=%s)",
-                    article.title, text_len, min_chars, url_hint, article.content_type,
-                )
+                logger.warning("Quality reject: %s (fulltext is empty)", article.title)
                 quality_rejected += 1
         else:
-            # Tweets use RSS summary as the acceptable fallback content
-            # (nitter pages are JS-rendered, so fulltext extraction is skipped)
+            # Tweets: always accept (RSS summary IS the content)
             if url_hint == "tweet":
                 quality_articles.append(article)
-                logger.debug(
-                    "Tweet fallback accepted: %s (summary=%d chars; url_hint=%s)",
-                    article.title, len(article.summary) if article.summary else 0, url_hint,
-                )
+            # Other: accept if summary exists (lowered threshold to 50 chars)
             elif article.summary and len(re.sub(r'<[^>]+>', '', article.summary).strip()) >= MIN_SUMMARY_CHARS:
                 quality_articles.append(article)
             else:
@@ -168,10 +154,8 @@ def main() -> None:
                 quality_rejected += 1
 
     logger.info(
-        "Quality filter: %d passed, %d rejected (min %d chars fulltext / "
-        "%d chars discussion / %d chars summary)",
-        len(quality_articles), quality_rejected,
-        MIN_FULLTEXT_CHARS, MIN_DISCUSSION_FULLTEXT_CHARS, MIN_SUMMARY_CHARS,
+        "Quality filter: %d passed, %d rejected (min %d chars summary for non-tweet, no-fulltext articles)",
+        len(quality_articles), quality_rejected, MIN_SUMMARY_CHARS,
     )
 
     # ------------------------------------------------------------------
