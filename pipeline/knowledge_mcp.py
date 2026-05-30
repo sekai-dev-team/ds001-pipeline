@@ -7,6 +7,7 @@ to create episodic knowledge notes.
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -17,7 +18,9 @@ from pipeline.article import Article
 logger = logging.getLogger(__name__)
 
 KMCP_BASE_URL = "http://knowledge-mcp:8000/mcp"
-REQUEST_TIMEOUT = 30
+REQUEST_TIMEOUT = 120  # notes now include full article text (~6KB+), needs longer timeout
+MAX_RETRIES = 2  # retry up to 2 times on timeout
+RETRY_DELAY = 5  # seconds between retries
 _INITIALIZED = False
 
 
@@ -141,7 +144,32 @@ def write_note(article: Article) -> bool:
         return True
 
     except requests.exceptions.Timeout:
-        logger.error("k-mcp timeout for '%s'", article.title)
+        logger.warning("k-mcp timeout for '%s' (attempt 1/%d)", article.title, MAX_RETRIES + 1)
+        # Retry on timeout
+        for attempt in range(1, MAX_RETRIES + 1):
+            time.sleep(RETRY_DELAY * attempt)
+            logger.info("Retrying write_note for '%s' (attempt %d/%d)", article.title, attempt + 1, MAX_RETRIES + 1)
+            try:
+                resp = requests.post(
+                    KMCP_BASE_URL,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Accept": "application/json",
+                    },
+                    json=payload,
+                    timeout=REQUEST_TIMEOUT,
+                )
+                resp.raise_for_status()
+                result = resp.json()
+                if "error" not in result:
+                    logger.info("Written note (after retry): %s", filename)
+                    return True
+                logger.error("k-mcp returned error for '%s' (retry %d): %s", article.title, attempt + 1, result["error"])
+                return False
+            except requests.exceptions.Timeout:
+                logger.warning("k-mcp timeout for '%s' (attempt %d/%d)", article.title, attempt + 1, MAX_RETRIES + 1)
+                if attempt == MAX_RETRIES:
+                    logger.error("k-mcp timeout for '%s' after %d retries — giving up", article.title, MAX_RETRIES)
         return False
     except requests.exceptions.RequestException as exc:
         logger.error("k-mcp request failed for '%s': %s", article.title, exc)

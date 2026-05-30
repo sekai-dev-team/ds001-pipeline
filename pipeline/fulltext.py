@@ -28,17 +28,29 @@ except ImportError:
 def _extract_trafilatura(url: str, timeout: int = 30) -> Optional[str]:
     """Extract fulltext via trafilatura (markdown output).
 
+    Uses ``requests.get()`` for the HTTP fetch (so we can control the
+    timeout), then passes the response text to ``trafilatura.extract()``.
+
     Returns *None* if extraction fails or trafilatura is not installed.
     """
     if not TRAFILATURA_AVAILABLE:
         return None
 
     try:
-        downloaded = trafilatura.fetch_url(url, timeout=timeout)
-        if downloaded is None:
-            logger.debug("trafilatura.fetch_url returned None for: %s", url)
-            return None
-        result = trafilatura.extract(downloaded, output_format="markdown")
+        import requests as req_lib
+
+        resp = req_lib.get(
+            url,
+            timeout=timeout,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (compatible; DS-001-Pipeline/0.2; "
+                    "+https://github.com/sekai-dev-team/ds001-pipeline)"
+                ),
+            },
+        )
+        resp.raise_for_status()
+        result = trafilatura.extract(resp.text, output_format="markdown")
         if result is None:
             logger.debug("trafilatura.extract returned None for: %s", url)
             return None
