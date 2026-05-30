@@ -35,8 +35,8 @@ def url_pattern_hint(url: str) -> str:
     if re.search(r"arxiv\.org/abs/\d+", url):
         return "arxiv_paper"
 
-    # Nitter tweets (JS-rendered pages)
-    if re.search(r"nitter\.net/\w+/status/", url):
+    # Tweets (JS-rendered pages — skip fulltext extraction, use RSS summary)
+    if re.search(r"(?:nitter\.net|x\.com|twitter\.com)/\w+/status/", url):
         return "tweet"
 
     # Discussion sites
