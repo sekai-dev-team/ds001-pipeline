@@ -127,7 +127,7 @@ def main() -> None:
     quality_articles: list[Article] = []
     quality_rejected = 0
     MIN_FULLTEXT_CHARS = 800
-    MIN_DISCUSSION_FULLTEXT_CHARS = 400
+    MIN_DISCUSSION_FULLTEXT_CHARS = 250
     MIN_SUMMARY_CHARS = 200
 
     for article in relevant_articles:
