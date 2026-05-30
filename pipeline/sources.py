@@ -252,6 +252,7 @@ def _fetch_langchain() -> list[Article]:
             entry,
             source_name="LangChain Releases",
             source_tag="source/langchain",
+            max_age_hours=72,
         )
         if article is not None:
             articles.append(article)
