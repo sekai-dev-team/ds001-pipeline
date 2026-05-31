@@ -141,6 +141,19 @@ def _render_signals(signals: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _render_source_stats(per_source: dict[str, dict[str, int]]) -> str:
+    """Render a per-source statistics table as markdown."""
+    lines = ["## 📊 来源统计", ""]
+    lines.append("| 来源 | 抓取 | 相关 | 入库 |")
+    lines.append("|------|------|------|------|")
+    for source_name, counts in per_source.items():
+        fetched = counts.get("fetched", 0)
+        relevant = counts.get("relevant", 0)
+        ingested = counts.get("ingested", 0)
+        lines.append(f"| {source_name} | {fetched} | {relevant} | {ingested} |")
+    return "\n".join(lines)
+
+
 def _render_article_list(articles: list[Article]) -> str:
     """Render the article index section of the digest markdown."""
     lines = [f"## 📋 摄入文章 ({len(articles)}篇)"]
@@ -158,6 +171,7 @@ def generate_digest(
     articles: list[Article],
     mode: str,
     timestamp: str,
+    per_source: dict[str, dict[str, int]] | None = None,
 ) -> str:
     """Generate a daily digest markdown document.
 
@@ -169,6 +183,10 @@ def generate_digest(
         Pipeline mode (``"daily"`` or ``"hn-arxiv"``) — included as metadata.
     timestamp:
         ISO-8601 pipeline timestamp.
+    per_source:
+        Optional per-source statistics dict mapping source names to counts
+        (``fetched``, ``relevant``, ``ingested``). Rendered as a markdown
+        table between the signals and article list sections.
 
     Returns
     -------
@@ -227,6 +245,10 @@ def generate_digest(
     else:
         logger.info("No signals extracted — falling back to article-list-only digest")
         body = "## 🔍 今日信号\n\n*信号分析暂不可用 — 以下为完整文章索引。*\n\n"
+
+    # Per-source statistics (if available)
+    if per_source:
+        body += "\n" + _render_source_stats(per_source)
 
     body += "\n" + _render_article_list(articles)
 

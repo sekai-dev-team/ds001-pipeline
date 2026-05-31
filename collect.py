@@ -172,23 +172,6 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Step 4.25: Generate daily digest
     # ------------------------------------------------------------------
-    ingested_articles = quality_articles[:ingested] if quality_articles else []
-    if ingested_articles:
-        logger.info(
-            "Generating daily digest for %d ingested articles...",
-            len(ingested_articles),
-        )
-        digest_md = generate_digest(ingested_articles, mode, timestamp)
-        if write_digest(digest_md, timestamp):
-            logger.info("Digest saved to vault")
-        else:
-            logger.warning("Digest could not be saved to vault")
-    else:
-        logger.info("No ingested articles to digest")
-
-    # ------------------------------------------------------------------
-    # Step 4.5: Per-source statistics
-    # ------------------------------------------------------------------
     from collections import defaultdict
 
     per_source: dict[str, dict[str, int]] = defaultdict(
@@ -210,6 +193,20 @@ def main() -> None:
     # (write_notes writes in order, so match by index)
     for article in quality_articles[:ingested]:
         per_source[article.source_name]["ingested"] += 1
+
+    ingested_articles = quality_articles[:ingested] if quality_articles else []
+    if ingested_articles:
+        logger.info(
+            "Generating daily digest for %d ingested articles...",
+            len(ingested_articles),
+        )
+        digest_md = generate_digest(ingested_articles, mode, timestamp, per_source=per_source)
+        if write_digest(digest_md, timestamp):
+            logger.info("Digest saved to vault")
+        else:
+            logger.warning("Digest could not be saved to vault")
+    else:
+        logger.info("No ingested articles to digest")
 
     # ------------------------------------------------------------------
     # Step 5: Print output statistics
