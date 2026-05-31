@@ -11,10 +11,12 @@ import logging
 import re
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Callable
 
 import feedparser
 import requests
+import yaml
 
 from pipeline.article import Article
 
@@ -149,6 +151,22 @@ def _rss_entry_to_article(entry, *, source_name: str, source_tag: str, max_age_h
         summary=_summary_from_entry(entry),
         published_at=_iso_date(entry.get("published_parsed")),
     )
+
+
+# ---------------------------------------------------------------------------
+# YAML source configuration
+# ---------------------------------------------------------------------------
+
+
+def _load_yaml_sources() -> list[dict]:
+    """Load source configs from pipeline/sources.yaml.
+
+    Returns a list of dicts, each describing one source.
+    """
+    yaml_path = Path(__file__).parent / "sources.yaml"
+    with open(yaml_path) as f:
+        data = yaml.safe_load(f)
+    return data.get("sources", [])
 
 
 # ---------------------------------------------------------------------------
