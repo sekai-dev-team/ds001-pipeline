@@ -119,9 +119,14 @@ def filter_articles(articles: list[Article]) -> list[Article]:
         return []
 
     relevant_articles: list[Article] = []
+    # Sort by summary length to group similar content types together.
+    # Short-form sources (Nitter, Google News) and long-form sources (HN,
+    # arXiv, blogs) get batched separately, preventing LLM from making
+    # relative quality judgments across content types.
+    sorted_articles = sorted(articles, key=lambda a: len(a.summary or ""))
     batches = [
-        articles[i : i + MAX_ARTICLES_PER_BATCH]
-        for i in range(0, len(articles), MAX_ARTICLES_PER_BATCH)
+        sorted_articles[i : i + MAX_ARTICLES_PER_BATCH]
+        for i in range(0, len(sorted_articles), MAX_ARTICLES_PER_BATCH)
     ]
     total_batches = len(batches)
 
