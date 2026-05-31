@@ -37,15 +37,15 @@ def _fetch_feed(url: str, timeout: int = REQUEST_TIMEOUT) -> feedparser.FeedPars
     """Fetch and parse an RSS/Atom feed with feedparser.
 
     Returns the parsed feed dict, or *None* on any failure.
-    Retries up to 2 times on HTTP 429 (rate limit) using Retry-After header,
+    Retries up to 3 times on HTTP 429 (rate limit) using Retry-After header,
     and on transient errors with exponential backoff.
     """
-    max_retries = 2
+    max_retries = 3
     for attempt in range(max_retries + 1):
         try:
             resp = _session.get(url, timeout=timeout)
             if resp.status_code == 429:
-                retry_after = int(resp.headers.get("Retry-After", "5"))
+                retry_after = int(resp.headers.get("Retry-After", "15"))
                 if attempt < max_retries:
                     logger.warning(
                         "HTTP 429 from %s, retrying in %ds (attempt %d/%d)",

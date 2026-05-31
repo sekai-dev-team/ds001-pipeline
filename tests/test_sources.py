@@ -93,7 +93,31 @@ def test_fetch_feed_returns_none_after_exhausting_429_retries():
             result = _fetch_feed("https://example.com/feed")
 
     assert result is None, "Should return None after max 429 retries"
-    assert mock_session.get.call_count == 3, "Should have tried 3 times (initial + 2 retries)"
+    assert mock_session.get.call_count == 4, "Should have tried 4 times (initial + 3 retries)"
+
+
+def test_fetch_feed_uses_15s_default_retry_after_when_header_missing():
+    """_fetch_feed() must default Retry-After to 15s when the header is absent."""
+    mock_resp = MagicMock()
+    mock_resp.status_code = 429
+    mock_resp.headers = {}  # No Retry-After header
+    mock_resp.raise_for_status.side_effect = None
+
+    mock_resp_ok = MagicMock()
+    mock_resp_ok.status_code = 200
+    mock_resp_ok.raise_for_status.return_value = None
+
+    mock_parsed = MagicMock()
+    mock_parsed.entries = []
+
+    with patch("pipeline.sources._session") as mock_session:
+        mock_session.get.side_effect = [mock_resp, mock_resp_ok]
+        with patch("pipeline.sources.feedparser.parse", return_value=mock_parsed):
+            with patch("pipeline.sources.time.sleep") as mock_sleep:
+                result = _fetch_feed("https://example.com/feed")
+
+    assert result is mock_parsed, "Should return parsed feed after retry"
+    mock_sleep.assert_called_once_with(15)
 
 
 def test_fetch_feed_retries_on_network_error_then_succeeds():
