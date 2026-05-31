@@ -230,6 +230,65 @@ def _fetch_nitter_feed(handle: str, source_name: str, source_tag: str) -> list[A
     return []
 
 
+# ---------------------------------------------------------------------------
+# Builder functions — produce fetcher closures from YAML config
+# ---------------------------------------------------------------------------
+
+
+def _build_rss_fetcher(name: str, tag: str, url: str, window: int) -> SourceFunc:
+    """Build a fetcher function for a standard RSS/Atom feed."""
+    def _fetch() -> list[Article]:
+        feed = _fetch_feed(url)
+        if feed is None:
+            return []
+        articles: list[Article] = []
+        for entry in feed.entries:
+            article = _rss_entry_to_article(
+                entry, source_name=name, source_tag=tag, max_age_hours=window,
+            )
+            if article is not None:
+                articles.append(article)
+        return articles
+    return _fetch
+
+
+def _build_nitter_fetcher(name: str, tag: str, window: int, handle: str) -> SourceFunc:
+    """Build a fetcher function for a Nitter (Twitter RSS proxy) source."""
+    def _fetch() -> list[Article]:
+        return _fetch_nitter_feed(
+            handle, source_name=name, source_tag=tag,
+        )
+    return _fetch
+
+
+def _build_hn_fetcher(name: str, tag: str, window: int, streams: list[str]) -> SourceFunc:
+    """Build a fetcher function for a Hacker News multi-stream source."""
+    def _fetch() -> list[Article]:
+        all_articles: list[Article] = []
+        seen_urls: set[str] = set()
+        for url in streams:
+            feed = _fetch_feed(url)
+            if feed is None:
+                continue
+            for entry in feed.entries:
+                link = entry.get("link", "")
+                if link in seen_urls:
+                    continue
+                seen_urls.add(link)
+                if not _within_last_24h(entry, max_age_hours=window):
+                    continue
+                all_articles.append(Article(
+                    title=entry.get("title", ""),
+                    url=link,
+                    source_name=name,
+                    source_tag=tag,
+                    summary=_summary_from_entry(entry),
+                    published_at=_iso_date(entry.get("published_parsed")),
+                ))
+        return all_articles
+    return _fetch
+
+
 # ====================== 2. Google AI Blog ============================
 
 def _fetch_google_ai() -> list[Article]:
