@@ -1,4 +1,4 @@
-"""All 11 curated sources for DS-001 pipeline.
+"""All 9 curated sources for DS-001 pipeline.
 
 Every source function is wrapped in an independent try/except so a single
 source failure never blocks the others.  Each returns a list of Article
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # Shared helpers
 # ---------------------------------------------------------------------------
 
-REQUEST_TIMEOUT = 30  # seconds
+REQUEST_TIMEOUT = 60  # seconds (arXiv slow XML responses)
 USER_AGENT = (
     "DS-001-Pipeline/0.1 (+https://github.com/sekai-dev-team/ds001-pipeline)"
 )
@@ -37,14 +37,32 @@ def _fetch_feed(url: str, timeout: int = REQUEST_TIMEOUT) -> feedparser.FeedPars
     """Fetch and parse an RSS/Atom feed with feedparser.
 
     Returns the parsed feed dict, or *None* on any failure.
+    Retries up to 2 times on HTTP 429 (rate limit) using Retry-After header,
+    and on transient errors with exponential backoff.
     """
-    try:
-        resp = _session.get(url, timeout=timeout)
-        resp.raise_for_status()
-        return feedparser.parse(resp.content)
-    except Exception:
-        logger.exception("Failed to fetch feed: %s", url)
-        return None
+    max_retries = 2
+    for attempt in range(max_retries + 1):
+        try:
+            resp = _session.get(url, timeout=timeout)
+            if resp.status_code == 429:
+                retry_after = int(resp.headers.get("Retry-After", "5"))
+                if attempt < max_retries:
+                    logger.warning(
+                        "HTTP 429 from %s, retrying in %ds (attempt %d/%d)",
+                        url, retry_after, attempt + 1, max_retries,
+                    )
+                    time.sleep(retry_after)
+                    continue
+                logger.error("HTTP 429 from %s after %d retries", url, max_retries)
+                return None
+            resp.raise_for_status()
+            return feedparser.parse(resp.content)
+        except Exception:
+            if attempt < max_retries:
+                time.sleep(2 ** attempt)
+                continue
+            logger.exception("Failed to fetch feed: %s", url)
+            return None
 
 
 def _iso_date(parsed_struct: time.struct_time | None) -> str:
@@ -249,73 +267,7 @@ def _fetch_langchain() -> list[Article]:
 
 _register("LangChain Releases", _fetch_langchain)
 
-# ====================== 5. Qwen Papers (arXiv) ==============================
-
-ARXIV_QWEN_QUERY = (
-    "http://export.arxiv.org/api/query?"
-    "search_query=all:qwen"
-    "&sortBy=submittedDate&sortOrder=descending&max_results=30"
-)
-
-
-def _fetch_qwen_releases() -> list[Article]:
-    feed = _fetch_feed(ARXIV_QWEN_QUERY)
-    if feed is None:
-        return []
-    articles: list[Article] = []
-    for entry in feed.entries:
-        link = entry.get("id", "") or entry.get("link", "")
-        if link.startswith("http://"):
-            link = "https://" + link[7:]
-        # arXiv does NOT use _within_last_24h (same as main arXiv source)
-        articles.append(
-            Article(
-                title=entry.get("title", "").strip().replace("\n", " "),
-                url=link,
-                source_name="Qwen Papers (arXiv)",
-                source_tag="source/qwen",
-                summary=_summary_from_entry(entry),
-                published_at=_iso_date(entry.get("published_parsed")),
-            )
-        )
-    return articles
-
-_register("Qwen Papers (arXiv)", _fetch_qwen_releases)
-
-# ====================== 6. DeepSeek Papers (arXiv) ==========================
-
-ARXIV_DEEPSEEK_QUERY = (
-    "http://export.arxiv.org/api/query?"
-    "search_query=all:deepseek"
-    "&sortBy=submittedDate&sortOrder=descending&max_results=30"
-)
-
-
-def _fetch_deepseek_releases() -> list[Article]:
-    feed = _fetch_feed(ARXIV_DEEPSEEK_QUERY)
-    if feed is None:
-        return []
-    articles: list[Article] = []
-    for entry in feed.entries:
-        link = entry.get("id", "") or entry.get("link", "")
-        if link.startswith("http://"):
-            link = "https://" + link[7:]
-        # arXiv does NOT use _within_last_24h (same as main arXiv source)
-        articles.append(
-            Article(
-                title=entry.get("title", "").strip().replace("\n", " "),
-                url=link,
-                source_name="DeepSeek Papers (arXiv)",
-                source_tag="source/deepseek",
-                summary=_summary_from_entry(entry),
-                published_at=_iso_date(entry.get("published_parsed")),
-            )
-        )
-    return articles
-
-_register("DeepSeek Papers (arXiv)", _fetch_deepseek_releases)
-
-# ====================== 7. @_akhaliq (Nitter RSS) ============================
+# ====================== 5. @_akhaliq (Nitter RSS) ============================
 
 def _fetch_akhaliq() -> list[Article]:
     return _fetch_nitter_feed(
@@ -326,7 +278,7 @@ def _fetch_akhaliq() -> list[Article]:
 
 _register("@_akhaliq", _fetch_akhaliq)
 
-# ====================== 8. Anthropic News (Google News RSS) ===================
+# ====================== 6. Anthropic News (Google News RSS) ===================
 
 def _fetch_anthropic_news() -> list[Article]:
     """Google News RSS for Anthropic — catches news coverage, partnerships, launches."""
@@ -347,7 +299,7 @@ def _fetch_anthropic_news() -> list[Article]:
 
 _register("Anthropic News", _fetch_anthropic_news)
 
-# ====================== 9. @hwchase17 (Nitter RSS) ===========================
+# ====================== 7. @hwchase17 (Nitter RSS) ===========================
 
 def _fetch_hwchase17() -> list[Article]:
     return _fetch_nitter_feed(
@@ -358,7 +310,7 @@ def _fetch_hwchase17() -> list[Article]:
 
 _register("@hwchase17", _fetch_hwchase17)
 
-# ====================== 10. @steipete (Nitter RSS) ==========================
+# ====================== 8. @steipete (Nitter RSS) ==========================
 
 def _fetch_steipete() -> list[Article]:
     return _fetch_nitter_feed(
@@ -369,7 +321,7 @@ def _fetch_steipete() -> list[Article]:
 
 _register("@steipete", _fetch_steipete)
 
-# ====================== 11. Hacker News (3 sub-streams) ====================
+# ====================== 9. Hacker News (3 sub-streams) ====================
 
 HN_STREAMS = [
     ("HN Frontpage", "https://hnrss.org/frontpage?count=30"),
@@ -407,7 +359,7 @@ def _fetch_hackernews() -> list[Article]:
 
 _register("Hacker News", _fetch_hackernews)
 
-# ====================== 12. arXiv (cs.AI + cs.CL) =========================
+# ====================== 10. arXiv (cs.AI + cs.CL) =========================
 
 ARXIV_QUERY = (
     "http://export.arxiv.org/api/query?"
@@ -433,13 +385,29 @@ def _fetch_arxiv() -> list[Article]:
         # - a 24h window from submission time means papers >24h old are invisible
         # - instead, we rely on sortBy=submittedDate desc + max_results=50 to get the latest batch
         # - k-mcp write_note dedup prevents re-ingestion of same URL
+
+        title = entry.get("title", "").strip().replace("\n", " ")
+        summary = _summary_from_entry(entry)
+
+        # Post-hoc source tagging: check title/summary for Qwen/DeepSeek
+        text_lower = (title + " " + summary).lower()
+        if "qwen" in text_lower:
+            source_name = "Qwen Papers (arXiv)"
+            source_tag = "source/qwen"
+        elif "deepseek" in text_lower:
+            source_name = "DeepSeek Papers (arXiv)"
+            source_tag = "source/deepseek"
+        else:
+            source_name = "arXiv"
+            source_tag = "source/arxiv"
+
         articles.append(
             Article(
-                title=entry.get("title", "").strip().replace("\n", " "),
+                title=title,
                 url=link,
-                source_name="arXiv",
-                source_tag="source/arxiv",
-                summary=_summary_from_entry(entry),
+                source_name=source_name,
+                source_tag=source_tag,
+                summary=summary,
                 published_at=_iso_date(entry.get("published_parsed")),
             )
         )
