@@ -7,12 +7,14 @@ to create episodic knowledge notes.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import time
 from datetime import datetime, timezone
 from typing import Any
 
 import requests
+import yaml
 
 from pipeline.article import Article
 
@@ -230,6 +232,118 @@ def write_notes(articles: list[Article]) -> tuple[int, int]:
         if write_note(article):
             success += 1
     return success, len(articles)
+
+
+# -- Filesystem-first bulk write (avoids per-note embedding model calls) --
+
+VAULT_PATH = os.environ.get("DS001_VAULT_PATH", "/vault")
+
+
+def write_notes_fs(articles: list[Article]) -> tuple[int, int]:
+    """Write article .md files directly to the vault filesystem.
+
+    Each article is formatted as markdown with YAML frontmatter and written
+    to ``DS001_VAULT_PATH`` (default ``/vault``).  No HTTP calls are made
+    per article — this avoids triggering ``incremental_index()`` (and the
+    embedding model) for every write.  Call ``reindex_vault()`` **once**
+    after all files are written to bulk-reindex the vault.
+
+    Returns ``(success_count, total_count)``.
+    """
+    if not articles:
+        return 0, 0
+
+    os.makedirs(VAULT_PATH, exist_ok=True)
+    success = 0
+
+    for article in articles:
+        safe_name = "".join(
+            c if c.isalnum() or c in " -_" else "_" for c in article.title
+        )
+        safe_name = safe_name.strip().replace(" ", "_")[:120] or "untitled"
+        filename = f"{safe_name}.md"
+        filepath = os.path.join(VAULT_PATH, filename)
+
+        content = _make_note_content(article)
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        frontmatter = {
+            "tags": ["ai-agent", "type/episodic", article.source_tag],
+            "memory_type": "episodic",
+            "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            "ingested_at": now_iso,
+            "source_url": article.url,
+            "has_fulltext": article.has_fulltext,
+        }
+
+        try:
+            fm_yaml = yaml.dump(
+                frontmatter, allow_unicode=True, default_flow_style=None, sort_keys=False
+            ).strip()
+            body = f"---\n{fm_yaml}\n---\n\n{content}"
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(body)
+            logger.info("Written note to filesystem: %s (relevant=%s)", filename, article.relevant)
+            success += 1
+        except OSError as exc:
+            logger.error("Failed to write note '%s' to filesystem: %s", filename, exc)
+
+    logger.info(
+        "Filesystem write complete: %d/%d notes written to %s",
+        success, len(articles), VAULT_PATH,
+    )
+    return success, len(articles)
+
+
+def reindex_vault() -> bool:
+    """Send a single ``reindex`` RPC call to k-mcp to bulk-reindex all notes.
+
+    Call this **once** after ``write_notes_fs()`` finishes writing all files.
+    Uses a longer timeout (360 s) because a full rebuild touches every .md
+    file in the vault and may invoke the embedding model many times in
+    sequence (but crucially, within a single process that does not stack
+    incremental-index overhead).
+
+    Returns ``True`` on success, ``False`` on failure.
+    """
+    if not _initialize():
+        logger.error("k-mcp initialize failed, cannot reindex vault")
+        return False
+
+    payload = _rpc_payload("tools/call", {
+        "name": "reindex",
+        "arguments": {},
+    })
+
+    try:
+        resp = requests.post(
+            KMCP_BASE_URL,
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            json=payload,
+            timeout=360,  # bulk reindex can take minutes with embedding model
+        )
+        resp.raise_for_status()
+        result = resp.json()
+
+        if "error" in result:
+            logger.error("k-mcp reindex returned error: %s", result["error"])
+            return False
+
+        logger.info("Vault reindex succeeded: %s", result.get("result", "ok"))
+        return True
+
+    except requests.exceptions.Timeout:
+        logger.error("k-mcp reindex timed out after 360s")
+        return False
+    except requests.exceptions.RequestException as exc:
+        logger.error("k-mcp reindex request failed: %s", exc)
+        return False
+    except Exception as exc:
+        logger.error("Unexpected error during reindex: %s", exc)
+        return False
 
 
 def write_digest(digest_md: str, timestamp: str) -> bool:

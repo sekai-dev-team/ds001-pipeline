@@ -23,7 +23,7 @@ from pipeline.article import Article
 from pipeline.sources import fetch_all, all_sources
 from pipeline.llm_filter import filter_articles
 from pipeline.fulltext import fetch_fulltext, url_pattern_hint
-from pipeline.knowledge_mcp import write_notes, write_digest
+from pipeline.knowledge_mcp import write_notes_fs, reindex_vault, write_digest
 from pipeline.digest import generate_digest
 
 logging.basicConfig(
@@ -160,12 +160,20 @@ def main() -> None:
     )
 
     # ------------------------------------------------------------------
-    # Step 4: Write to knowledge-mcp
+    # Step 4: Write articles to vault filesystem (filesystem-first)
     # ------------------------------------------------------------------
     ingested, attempted = 0, 0
     if quality_articles:
-        ingested, attempted = write_notes(quality_articles)
-        logger.info("Ingested %d/%d notes into knowledge-mcp", ingested, attempted)
+        ingested, attempted = write_notes_fs(quality_articles)
+        logger.info("Wrote %d/%d notes to vault filesystem", ingested, attempted)
+
+        # Bulk reindex once after all files are written
+        if ingested > 0:
+            logger.info("Triggering bulk vault reindex...")
+            if reindex_vault():
+                logger.info("Vault reindex complete")
+            else:
+                logger.warning("Vault reindex failed — notes are on disk but not searchable")
     else:
         logger.info("No quality-passing articles to ingest")
 
@@ -189,8 +197,8 @@ def main() -> None:
     for article in quality_articles:
         per_source[article.source_name]["quality_passed"] += 1
 
-    # For ingested — track by article in write_notes
-    # (write_notes writes in order, so match by index)
+    # For ingested — track by article in write_notes_fs
+    # (write_notes_fs writes in order, so match by index)
     for article in quality_articles[:ingested]:
         per_source[article.source_name]["ingested"] += 1
 
