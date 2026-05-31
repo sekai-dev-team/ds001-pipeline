@@ -230,3 +230,104 @@ def write_notes(articles: list[Article]) -> tuple[int, int]:
         if write_note(article):
             success += 1
     return success, len(articles)
+
+
+def write_digest(digest_md: str, timestamp: str) -> bool:
+    """Write the daily digest markdown document to the knowledge-mcp vault.
+
+    Parameters
+    ----------
+    digest_md:
+        The complete markdown digest content.
+    timestamp:
+        ISO-8601 pipeline timestamp (used to derive the date for the filename).
+
+    Returns
+    -------
+    bool
+        ``True`` if the digest was successfully saved.
+    """
+    # Derive date from timestamp
+    try:
+        dt = datetime.fromisoformat(timestamp)
+        date_str = dt.strftime("%Y-%m-%d")
+    except (ValueError, TypeError):
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    filename = f"daily-digest/{date_str}.md"
+
+    # Initialize MCP session before tool call
+    if not _initialize():
+        logger.error("k-mcp initialize failed, cannot write digest")
+        return False
+
+    frontmatter = {
+        "tags": ["ai-agent", "type/digest", "daily-digest"],
+        "memory_type": "episodic",
+        "date": date_str,
+        "ingested_at": timestamp,
+    }
+
+    payload = _rpc_payload("tools/call", {
+        "name": "write_note",
+        "arguments": {
+            "path": filename,
+            "content": digest_md,
+            "frontmatter": frontmatter,
+            "force": True,
+        },
+    })
+
+    try:
+        resp = requests.post(
+            KMCP_BASE_URL,
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            json=payload,
+            timeout=REQUEST_TIMEOUT,
+        )
+        resp.raise_for_status()
+        result = resp.json()
+
+        if "error" in result:
+            logger.error("k-mcp returned error for digest '%s': %s", filename, result["error"])
+            return False
+
+        logger.info("Written digest: %s", filename)
+        return True
+
+    except requests.exceptions.Timeout:
+        logger.warning("k-mcp timeout for digest '%s', retrying...", filename)
+        for attempt in range(1, MAX_RETRIES + 1):
+            import time as _time
+            _time.sleep(RETRY_DELAY * attempt)
+            try:
+                resp = requests.post(
+                    KMCP_BASE_URL,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Accept": "application/json",
+                    },
+                    json=payload,
+                    timeout=REQUEST_TIMEOUT,
+                )
+                resp.raise_for_status()
+                result = resp.json()
+                if "error" not in result:
+                    logger.info("Written digest (after retry): %s", filename)
+                    return True
+                logger.error("k-mcp returned error for digest (retry %d): %s", attempt + 1, result["error"])
+                return False
+            except requests.exceptions.Timeout:
+                logger.warning("k-mcp timeout for digest (attempt %d/%d)", attempt + 1, MAX_RETRIES + 1)
+                if attempt == MAX_RETRIES:
+                    logger.error("k-mcp timeout for digest after %d retries — giving up", MAX_RETRIES)
+        return False
+    except requests.exceptions.RequestException as exc:
+        logger.error("k-mcp request failed for digest: %s", exc)
+        return False
+    except Exception as exc:
+        logger.error("Unexpected error writing digest: %s", exc)
+        return False

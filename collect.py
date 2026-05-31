@@ -23,7 +23,8 @@ from pipeline.article import Article
 from pipeline.sources import fetch_all, all_sources
 from pipeline.llm_filter import filter_articles
 from pipeline.fulltext import fetch_fulltext, url_pattern_hint
-from pipeline.knowledge_mcp import write_notes
+from pipeline.knowledge_mcp import write_notes, write_digest
+from pipeline.digest import generate_digest
 
 logging.basicConfig(
     level=logging.INFO,
@@ -167,6 +168,23 @@ def main() -> None:
         logger.info("Ingested %d/%d notes into knowledge-mcp", ingested, attempted)
     else:
         logger.info("No quality-passing articles to ingest")
+
+    # ------------------------------------------------------------------
+    # Step 4.25: Generate daily digest
+    # ------------------------------------------------------------------
+    ingested_articles = quality_articles[:ingested] if quality_articles else []
+    if ingested_articles:
+        logger.info(
+            "Generating daily digest for %d ingested articles...",
+            len(ingested_articles),
+        )
+        digest_md = generate_digest(ingested_articles, mode, timestamp)
+        if write_digest(digest_md, timestamp):
+            logger.info("Digest saved to vault")
+        else:
+            logger.warning("Digest could not be saved to vault")
+    else:
+        logger.info("No ingested articles to digest")
 
     # ------------------------------------------------------------------
     # Step 4.5: Per-source statistics
