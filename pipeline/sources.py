@@ -1,4 +1,4 @@
-"""All 12 curated sources for DS-001 pipeline.
+"""All 11 curated sources for DS-001 pipeline.
 
 Every source function is wrapped in an independent try/except so a single
 source failure never blocks the others.  Each returns a list of Article
@@ -194,17 +194,6 @@ def _fetch_nitter_feed(handle: str, source_name: str, source_tag: str) -> list[A
     return []
 
 
-# ====================== 1. Anthropic Research Blog ==========================
-
-def _fetch_anthropic() -> list[Article]:
-    logger.warning(
-        "Anthropic Blog: no RSS feed available "
-        "(all known feed URLs — /research/feed, /feed, /rss — return 404)"
-    )
-    return []
-
-_register("Anthropic Blog", _fetch_anthropic)
-
 # ====================== 2. Google AI Blog ============================
 
 def _fetch_google_ai() -> list[Article]:
@@ -326,7 +315,7 @@ def _fetch_deepseek_releases() -> list[Article]:
 
 _register("DeepSeek Papers (arXiv)", _fetch_deepseek_releases)
 
-# ====================== 7. @_akhaliq (Nitter RSS) ===========================
+# ====================== 7. @_akhaliq (Nitter RSS) ============================
 
 def _fetch_akhaliq() -> list[Article]:
     return _fetch_nitter_feed(
@@ -337,18 +326,7 @@ def _fetch_akhaliq() -> list[Article]:
 
 _register("@_akhaliq", _fetch_akhaliq)
 
-# ====================== 8. @AnthropicAI (Nitter RSS) ========================
-
-def _fetch_anthropic_twitter() -> list[Article]:
-    return _fetch_nitter_feed(
-        "AnthropicAI",
-        source_name="@AnthropicAI",
-        source_tag="source/anthropic-twitter",
-    )
-
-_register("@AnthropicAI", _fetch_anthropic_twitter)
-
-# ====================== 9. Anthropic News (Google News RSS) ===================
+# ====================== 8. Anthropic News (Google News RSS) ===================
 
 def _fetch_anthropic_news() -> list[Article]:
     """Google News RSS for Anthropic — catches news coverage, partnerships, launches."""
@@ -369,7 +347,7 @@ def _fetch_anthropic_news() -> list[Article]:
 
 _register("Anthropic News", _fetch_anthropic_news)
 
-# ====================== 10. @hwchase17 (Nitter RSS) ==========================
+# ====================== 9. @hwchase17 (Nitter RSS) ===========================
 
 def _fetch_hwchase17() -> list[Article]:
     return _fetch_nitter_feed(
@@ -380,7 +358,7 @@ def _fetch_hwchase17() -> list[Article]:
 
 _register("@hwchase17", _fetch_hwchase17)
 
-# ====================== 11. @steipete (Nitter RSS) ==========================
+# ====================== 10. @steipete (Nitter RSS) ==========================
 
 def _fetch_steipete() -> list[Article]:
     return _fetch_nitter_feed(
@@ -391,7 +369,7 @@ def _fetch_steipete() -> list[Article]:
 
 _register("@steipete", _fetch_steipete)
 
-# ====================== 12. Hacker News (3 sub-streams) ====================
+# ====================== 11. Hacker News (3 sub-streams) ====================
 
 HN_STREAMS = [
     ("HN Frontpage", "https://hnrss.org/frontpage?count=30"),
@@ -429,7 +407,7 @@ def _fetch_hackernews() -> list[Article]:
 
 _register("Hacker News", _fetch_hackernews)
 
-# ====================== 13. arXiv (cs.AI + cs.CL) =========================
+# ====================== 12. arXiv (cs.AI + cs.CL) =========================
 
 ARXIV_QUERY = (
     "http://export.arxiv.org/api/query?"
