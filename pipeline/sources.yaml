@@ -1,0 +1,50 @@
+# DS-001 Source Configuration
+# Standard RSS/Atom sources — add new sources here without touching Python.
+
+sources:
+  # --- Official RSS/Atom feeds ---
+  - name: "Google AI Blog"
+    url: "https://blog.google/innovation-and-ai/technology/ai/rss/"
+    tag: "source/google-ai"
+    window: 24
+
+  - name: "HuggingFace Blog"
+    url: "https://huggingface.co/blog/feed.xml"
+    tag: "source/huggingface"
+    window: 48
+
+  - name: "LangChain Releases"
+    url: "https://github.com/langchain-ai/langchain/releases.atom"
+    tag: "source/langchain"
+    window: 72
+
+  - name: "Anthropic News"
+    url: "https://news.google.com/rss/search?q=Anthropic+Claude+AI&hl=en-US&gl=US&ceid=US:en"
+    tag: "source/anthropic-news"
+    window: 24
+
+  # --- Nitter (Twitter via RSS proxy) ---
+  # Uses multi-instance fallback (defined in Python code)
+  - name: "@_akhaliq"
+    nitter: "_akhaliq"
+    tag: "source/akhaliq"
+    window: 24
+
+  - name: "@hwchase17"
+    nitter: "hwchase17"
+    tag: "source/hwchase17"
+    window: 24
+
+  - name: "@steipete"
+    nitter: "steipete"
+    tag: "source/steipete"
+    window: 24
+
+  # --- Hacker News (multi-stream) ---
+  - name: "Hacker News"
+    tag: "source/hackernews"
+    window: 24
+    hn_streams:
+      - "https://hnrss.org/frontpage?count=30"
+      - "https://hnrss.org/newest?points=50"
+      - "https://hnrss.org/newest?q=LLM+OR+Agent+OR+Claude+OR+open+source"
