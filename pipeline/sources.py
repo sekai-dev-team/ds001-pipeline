@@ -289,153 +289,6 @@ def _build_hn_fetcher(name: str, tag: str, window: int, streams: list[str]) -> S
     return _fetch
 
 
-# ====================== 2. Google AI Blog ============================
-
-def _fetch_google_ai() -> list[Article]:
-    feed = _fetch_feed("https://blog.google/innovation-and-ai/technology/ai/rss/")
-    if feed is None:
-        return []
-    articles: list[Article] = []
-    for entry in feed.entries:
-        article = _rss_entry_to_article(
-            entry, source_name="Google AI Blog", source_tag="source/google-ai"
-        )
-        if article is not None:
-            articles.append(article)
-    return articles
-
-_register("Google AI Blog", _fetch_google_ai)
-
-# ====================== 3. Hugging Face Blog ===============================
-
-def _fetch_huggingface() -> list[Article]:
-    feed = _fetch_feed("https://huggingface.co/blog/feed.xml")
-    if feed is None:
-        return []
-    articles: list[Article] = []
-    for entry in feed.entries:
-        article = _rss_entry_to_article(
-            entry, source_name="Hugging Face Blog", source_tag="source/huggingface",
-            max_age_hours=48,
-        )
-        if article is not None:
-            articles.append(article)
-    return articles
-
-_register("Hugging Face Blog", _fetch_huggingface)
-
-# ====================== 4. LangChain GitHub Releases ========================
-
-def _fetch_langchain() -> list[Article]:
-    feed = _fetch_feed("https://github.com/langchain-ai/langchain/releases.atom")
-    if feed is None:
-        return []
-    articles: list[Article] = []
-    for entry in feed.entries:
-        article = _rss_entry_to_article(
-            entry,
-            source_name="LangChain Releases",
-            source_tag="source/langchain",
-            max_age_hours=72,
-        )
-        if article is not None:
-            articles.append(article)
-    return articles
-
-_register("LangChain Releases", _fetch_langchain)
-
-# ====================== 5. @_akhaliq (Nitter RSS) ============================
-
-def _fetch_akhaliq() -> list[Article]:
-    return _fetch_nitter_feed(
-        "_akhaliq",
-        source_name="@_akhaliq",
-        source_tag="source/akhaliq",
-    )
-
-_register("@_akhaliq", _fetch_akhaliq)
-
-# ====================== 6. Anthropic News (Google News RSS) ===================
-
-def _fetch_anthropic_news() -> list[Article]:
-    """Google News RSS for Anthropic — catches news coverage, partnerships, launches."""
-    url = "https://news.google.com/rss/search?q=Anthropic+Claude+AI&hl=en-US&gl=US&ceid=US:en"
-    feed = _fetch_feed(url)
-    if feed is None:
-        return []
-    articles: list[Article] = []
-    for entry in feed.entries:
-        article = _rss_entry_to_article(
-            entry,
-            source_name="Anthropic News (Google News)",
-            source_tag="source/anthropic-news",
-        )
-        if article is not None:
-            articles.append(article)
-    return articles
-
-_register("Anthropic News", _fetch_anthropic_news)
-
-# ====================== 7. @hwchase17 (Nitter RSS) ===========================
-
-def _fetch_hwchase17() -> list[Article]:
-    return _fetch_nitter_feed(
-        "hwchase17",
-        source_name="@hwchase17",
-        source_tag="source/hwchase17",
-    )
-
-_register("@hwchase17", _fetch_hwchase17)
-
-# ====================== 8. @steipete (Nitter RSS) ==========================
-
-def _fetch_steipete() -> list[Article]:
-    return _fetch_nitter_feed(
-        "steipete",
-        source_name="@steipete",
-        source_tag="source/steipete",
-    )
-
-_register("@steipete", _fetch_steipete)
-
-# ====================== 9. Hacker News (3 sub-streams) ====================
-
-HN_STREAMS = [
-    ("HN Frontpage", "https://hnrss.org/frontpage?count=30"),
-    ("HN Newest (points≥50)", "https://hnrss.org/newest?points=50"),
-    ("HN Search (LLM/Agent)", "https://hnrss.org/newest?q=LLM+OR+Agent+OR+Claude+OR+open+source"),
-]
-
-
-def _fetch_hackernews() -> list[Article]:
-    all_articles: list[Article] = []
-    seen_urls: set[str] = set()
-    for stream_name, url in HN_STREAMS:
-        feed = _fetch_feed(url)
-        if feed is None:
-            logger.warning("HN stream '%s' failed, continuing", stream_name)
-            continue
-        for entry in feed.entries:
-            link = entry.get("link", "")
-            if link in seen_urls:
-                continue
-            seen_urls.add(link)
-            if not _within_last_24h(entry):
-                continue
-            all_articles.append(
-                Article(
-                    title=entry.get("title", ""),
-                    url=link,
-                    source_name=f"Hacker News ({stream_name})",
-                    source_tag="source/hackernews",
-                    summary=_summary_from_entry(entry),
-                    published_at=_iso_date(entry.get("published_parsed")),
-                )
-            )
-    return all_articles
-
-_register("Hacker News", _fetch_hackernews)
-
 # ====================== 10. arXiv (cs.AI + cs.CL) =========================
 
 ARXIV_QUERY = (
@@ -490,7 +343,28 @@ def _fetch_arxiv() -> list[Article]:
         )
     return articles
 
+# ---------------------------------------------------------------------------
+# Dynamic registration — sources from YAML + special-cased sources
+# ---------------------------------------------------------------------------
+
+for config in _load_yaml_sources():
+    if "nitter" in config:
+        fn = _build_nitter_fetcher(
+            config["name"], config["tag"], config["window"], config["nitter"],
+        )
+    elif "hn_streams" in config:
+        fn = _build_hn_fetcher(
+            config["name"], config["tag"], config["window"], config["hn_streams"],
+        )
+    elif "url" in config:
+        fn = _build_rss_fetcher(
+            config["name"], config["tag"], config["url"], config["window"],
+        )
+    _register(config["name"], fn)
+
+# Then register the special-cased source
 _register("arXiv", _fetch_arxiv)
+
 
 # ---------------------------------------------------------------------------
 # Public API
