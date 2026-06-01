@@ -41,7 +41,7 @@ SYSTEM_PROMPT = (
     "   **主题:** [1 sentence — what the article is about]\n"
     "   **方法/发现:** [2-3 sentences — key method, result, or insight]\n"
     "   **意义:** [1 sentence — why it matters]\n"
-    "   Total: at least 150 Chinese characters, at most 400.\n"
+    "   Total: at least 150 Chinese characters, at most 500.\n"
     'Return a JSON object with keys: relevant (bool), ai_summary (string), '
     'content_type (string).\n'
     "Always return valid JSON."
