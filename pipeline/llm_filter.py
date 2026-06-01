@@ -9,9 +9,10 @@ Two-pass pipeline (v0.5):
 
   → Fulltext extraction for all Pass-1-passed articles.
 
-**Pass 2** — Summarization (3 workers, ``max_tokens=1024``).
+**Pass 2** — Summarization (3 workers, ``max_tokens=1536``).
   Generates structured Chinese summaries using the first 4000 characters
   of fulltext. Falls back to RSS summary when fulltext is unavailable.
+  Also extracts concept tags during the same LLM call.
 """
 
 from __future__ import annotations
@@ -50,13 +51,20 @@ RELEVANCE_PROMPT = (
 )
 
 SUMMARIZE_PROMPT = (
-    "You are an AI news summarizer. For the article below, "
+    "You are an AI news summarizer and classifier. For the article below, "
     "generate a Chinese summary with these structured sections:\n"
     "**主题:** [1 sentence — what the article is about]\n"
     "**方法/发现:** [2-3 sentences — key method, result, or insight]\n"
     "**意义:** [1 sentence — why it matters]\n"
-    "Total: at least 150 Chinese characters, at most 500.\n"
-    'Return a JSON object with key: ai_summary (string).\n'
+    "Total: at least 150 Chinese characters, at most 500.\n\n"
+    "CONCEPT TAGS: Assign 0-3 concept tags to this article. "
+    "Known tags that are high-frequency:\n{known_tags}\n\n"
+    "Rules:\n"
+    "- Reuse an existing known tag name if the concept matches.\n"
+    "- Create a NEW tag (kebab-case English name) if the topic is new.\n"
+    "- Provide a one-sentence label_text for every tag.\n"
+    "Format concept_tags as a JSON array: [{{\"name\": \"...\", \"label_text\": \"...\"}}]\n\n"
+    'Return a JSON object with keys: ai_summary (string), concept_tags (array).\n'
     "Always return valid JSON."
 )
 
@@ -131,40 +139,36 @@ def _call_deepseek_relevance(article: Article) -> dict[str, Any] | None:
     return result
 
 
-def _call_deepseek_summarize(article: Article) -> dict[str, Any] | None:
-    """Pass 2: Full summarization using article fulltext.
+def _call_deepseek_summarize(
+    api_key: str, article_text: str, known_tags: str = ""
+) -> dict[str, Any] | None:
+    """Pass 2: Full summarization using article fulltext + concept tag extraction.
 
-    Uses the first 4000 characters of ``article.fulltext`` when available.
-    Falls back to the RSS summary (``article.summary``, first 300 chars)
-    for articles where fulltext extraction failed.
+    Uses the first 4000 characters of *article_text* (which should be either
+    ``article.fulltext`` or ``article.summary``, prepared by the caller).
 
-    Returns a dict with ``ai_summary`` (string) key, or *None* on failure.
-    ``max_tokens=1024`` — budget for structured Chinese summary.
+    Returns a dict with ``ai_summary`` (string) and ``concept_tags`` (list of
+    dicts with ``name`` and ``label_text`` keys), or *None* on failure.
+    ``max_tokens=1536`` — budget for structured Chinese summary + concept tags.
     """
-    api_key = os.environ.get("DEEPSEEK_API_KEY")
-    if not api_key:
-        logger.error("DEEPSEEK_API_KEY environment variable not set")
+    prompt = SUMMARIZE_PROMPT.format(known_tags=known_tags or "(no known tags yet)")
+
+    result = _call_deepseek(api_key, prompt, article_text, max_tokens=1536)
+    if result is None:
         return None
 
-    # Prefer fulltext (first 4000 chars); fall back to RSS summary
-    if article.has_fulltext and article.fulltext:
-        source_text = article.fulltext[:4000]
-    else:
-        source_text = article.summary[:300]
+    # Ensure concept_tags is present (default to empty list)
+    if "concept_tags" not in result:
+        result["concept_tags"] = []
 
-    text = (
-        f"Title: {article.title}\n"
-        f"Content: {source_text}\n"
-        f"URL: {article.url}"
-    )
-
-    result = _call_deepseek(api_key, SUMMARIZE_PROMPT, text, max_tokens=1024)
-    if result is None:
-        logger.error("DeepSeek summarization failed for: %s", article.title)
     return result
 
 
-def filter_articles(articles: list[Article]) -> list[Article]:
+def filter_articles(
+    articles: list[Article],
+    api_key: str,
+    tag_library: dict[str, dict] | None = None,
+) -> list[Article]:
     """Two-pass filter: relevance check → fulltext extraction → summarization.
 
     **Pass 1** (5 workers via ``ThreadPoolExecutor``):
@@ -176,12 +180,13 @@ def filter_articles(articles: list[Article]) -> list[Article]:
 
     **Pass 2** (3 workers via ``ThreadPoolExecutor``):
     Generate structured Chinese summaries using the first 4000 characters of
-    fulltext (``_call_deepseek_summarize``, ``max_tokens=1024``).  Falls back
+    fulltext (``_call_deepseek_summarize``, ``max_tokens=1536``).  Falls back
     to the RSS summary for articles where fulltext extraction failed.
+    Also extracts concept tags during the same LLM call.
 
     Errors are isolated per article — one failure does not affect others.
     Each article is updated in-place with ``relevant``, ``ai_summary``,
-    ``content_type``, ``fulltext``, and ``has_fulltext``.
+    ``concept_tags``, ``content_type``, ``fulltext``, and ``has_fulltext``.
     Only articles deemed relevant AND classified as "article" or "discussion"
     content type are returned.  ``link_only`` and ``low_quality`` are rejected.
     """
@@ -248,13 +253,37 @@ def filter_articles(articles: list[Article]) -> list[Article]:
     )
 
     # ------------------------------------------------------------------
-    # Pass 2: Summarization (3 workers, fulltext first 4000 chars)
+    # Pass 2: Summarization + concept tag extraction (3 workers, fulltext first 4000 chars)
     # ------------------------------------------------------------------
+    # Build known_tags string from tag library (only high-frequency: article_count > 5)
+    known = ""
+    if tag_library:
+        high_freq = {k: v for k, v in tag_library.items() if v.get("article_count", 0) > 5}
+        if high_freq:
+            known = "\n".join(
+                f'- {k}: "{v.get("label_text", "")}"' for k, v in sorted(high_freq.items())
+            )
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-        future_to_article = {
-            executor.submit(_call_deepseek_summarize, article): article
-            for article in pass1_passed
-        }
+        future_to_article: dict[concurrent.futures.Future, Article] = {}
+
+        for article in pass1_passed:
+            # Prepare article text (prefer fulltext first 4000 chars, fall back to RSS summary)
+            if article.has_fulltext and article.fulltext:
+                source_text = article.fulltext[:4000]
+            else:
+                source_text = article.summary[:300]
+
+            article_text = (
+                f"Title: {article.title}\n"
+                f"Content: {source_text}\n"
+                f"URL: {article.url}"
+            )
+
+            future = executor.submit(
+                _call_deepseek_summarize, api_key, article_text, known_tags=known
+            )
+            future_to_article[future] = article
 
         for future in concurrent.futures.as_completed(future_to_article):
             article = future_to_article[future]
@@ -262,6 +291,7 @@ def filter_articles(articles: list[Article]) -> list[Article]:
                 result = future.result()
                 if result is not None:
                     article.ai_summary = result.get("ai_summary", "")
+                    article.concept_tags = result.get("concept_tags", [])
             except Exception as exc:
                 logger.error(
                     "Pass 2 error for '%s': %s", article.title, exc,

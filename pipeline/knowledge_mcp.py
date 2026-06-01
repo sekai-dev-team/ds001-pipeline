@@ -6,7 +6,9 @@ to create episodic knowledge notes.
 
 from __future__ import annotations
 
+import json
 import logging
+import math
 import os
 import re
 import time
@@ -125,6 +127,273 @@ def _initialize() -> bool:
     except requests.exceptions.RequestException as exc:
         logger.error("k-mcp initialize request failed: %s", exc)
         return False
+
+
+# ------------------------------------------------------------------
+# k-mcp Embed Client
+# ------------------------------------------------------------------
+
+
+def _kmcp_embed(text: str) -> list[float] | None:
+    """Call k-mcp embed tool and return embedding vector.
+
+    Returns ``None`` if the k-mcp server is unreachable or returns an error.
+    """
+    if not _initialize():
+        return None
+    payload = _rpc_payload("tools/call", {
+        "name": "embed",
+        "arguments": {"text": text},
+    })
+    try:
+        resp = requests.post(KMCP_BASE_URL, json=payload, timeout=60)
+        resp.raise_for_status()
+        result = resp.json()
+        if "error" in result:
+            logger.warning("k-mcp embed returned error: %s", result["error"])
+            return None
+        content = result.get("result", {}).get("content", [])
+        if content and isinstance(content, list):
+            text_content = content[0].get("text", "[]")
+            return json.loads(text_content)
+    except Exception:
+        pass
+    return None
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    """Compute cosine similarity between two embedding vectors."""
+    if not a or not b:
+        return 0.0
+    if len(a) != len(b):
+        logger.warning(
+            "Embedding dimension mismatch: %d vs %d — treating as cos=0.0",
+            len(a), len(b),
+        )
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(x * x for x in b))
+    return dot / (norm_a * norm_b) if norm_a and norm_b else 0.0
+
+
+# ------------------------------------------------------------------
+# Tag Library File I/O
+# ------------------------------------------------------------------
+
+
+def _parse_frontmatter(content: str) -> dict[str, Any] | None:
+    """Parse YAML frontmatter from a markdown string.
+
+    Returns the parsed dict, or ``None`` if no frontmatter is found.
+    """
+    if not content.startswith("---"):
+        return None
+    end = content.find("---", 3)
+    if end == -1:
+        return None
+    yaml_str = content[3:end].strip()
+    if not yaml_str:
+        return None
+    try:
+        return yaml.safe_load(yaml_str)
+    except yaml.YAMLError:
+        return None
+
+
+def _read_tag_library() -> dict[str, dict]:
+    """Read all .md files in /vault/tags/, parse frontmatter.
+
+    Returns a dict mapping tag name → tag info dict.
+    """
+    tags_dir = os.path.join(VAULT_PATH, "tags")
+    library: dict[str, dict] = {}
+    if not os.path.isdir(tags_dir):
+        return library
+    for fname in sorted(os.listdir(tags_dir)):
+        if not fname.endswith(".md"):
+            continue
+        fpath = os.path.join(tags_dir, fname)
+        try:
+            with open(fpath, "r") as f:
+                content = f.read()
+        except OSError:
+            continue
+        fm = _parse_frontmatter(content)
+        if not fm:
+            continue
+        name = fm.get("name") or fname[:-3]
+        emb_raw = fm.get("embedding")
+        if isinstance(emb_raw, str):
+            try:
+                emb_raw = json.loads(emb_raw)
+            except (json.JSONDecodeError, TypeError):
+                emb_raw = []
+        library[name] = {
+            "name": name,
+            "embedding": emb_raw if isinstance(emb_raw, list) else [],
+            "label_text": fm.get("label_text", ""),
+            "article_count": fm.get("article_count", 0),
+            "concept_page": fm.get("concept_page"),
+            "first_seen": fm.get("first_seen"),
+            "last_seen": fm.get("last_seen"),
+        }
+    return library
+
+
+def _create_tag_note(name: str, label_text: str, embedding: list[float]) -> None:
+    """Create /vault/tags/{name}.md with frontmatter and body."""
+    tags_dir = os.path.join(VAULT_PATH, "tags")
+    os.makedirs(tags_dir, exist_ok=True)
+    emb_str = json.dumps(embedding)
+    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    content = f"""---
+name: {name}
+embedding: {emb_str}
+label_text: "{label_text}"
+article_count: 1
+concept_page:
+first_seen: {date_str}
+last_seen: {date_str}
+---
+
+# {name}
+
+{label_text}
+"""
+    filepath = os.path.join(tags_dir, f"{name}.md")
+    with open(filepath, "w") as f:
+        f.write(content)
+    logger.info("Created tag note: %s", filepath)
+
+
+def _update_tag_note(name: str, updates: dict) -> None:
+    """Patch frontmatter of /vault/tags/{name}.md.
+
+    Reads the existing note, applies *updates* to the frontmatter dict,
+    and rewrites.  If the file does not exist, this is a no-op.
+    """
+    fpath = os.path.join(VAULT_PATH, "tags", f"{name}.md")
+    if not os.path.isfile(fpath):
+        logger.warning("_update_tag_note: tag file not found: %s", fpath)
+        return
+
+    try:
+        with open(fpath, "r") as f:
+            content = f.read()
+    except OSError:
+        logger.warning("_update_tag_note: cannot read tag file: %s", fpath)
+        return
+
+    fm = _parse_frontmatter(content)
+    if not fm:
+        logger.warning("_update_tag_note: no frontmatter in tag file: %s", fpath)
+        return
+
+    # Apply updates
+    fm.update(updates)
+
+    # Rebuild the file
+    body_start = content.find("---", 3)
+    body = ""
+    if body_start != -1:
+        body = content[body_start + 3:].lstrip("\n")
+
+    new_fm_yaml = yaml.dump(
+        fm, allow_unicode=True, default_flow_style=None, sort_keys=False
+    ).strip()
+    new_content = f"---\n{new_fm_yaml}\n---\n\n{body}"
+
+    try:
+        with open(fpath, "w") as f:
+            f.write(new_content)
+    except OSError as exc:
+        logger.error("_update_tag_note: cannot write tag file: %s: %s", fpath, exc)
+
+
+# ------------------------------------------------------------------
+# Tag Processing (post-summarization)
+# ------------------------------------------------------------------
+
+
+def process_tags(articles: list[Article]) -> None:
+    """For each article, process concept_tags: dedup against tag library,
+    create new tags if needed, and set article.topic_tags for frontmatter.
+
+    Modifies articles in-place: sets ``article.topic_tags`` (list of tag names).
+    """
+    tag_library = _read_tag_library()
+    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    for article in articles:
+        article.topic_tags = []
+        if not hasattr(article, 'concept_tags') or not article.concept_tags:
+            continue
+
+        for tag in article.concept_tags:
+            name = tag.get("name", "").strip().lower().replace(" ", "-")
+            label = tag.get("label_text", "").strip()
+            if not name or not label:
+                continue
+
+            if name in tag_library:
+                # Existing tag: reuse
+                article.topic_tags.append(name)
+                tag_library[name]["article_count"] = tag_library[name].get("article_count", 0) + 1
+                _update_tag_note(name, {
+                    "article_count": tag_library[name]["article_count"],
+                    "last_seen": date_str,
+                })
+            else:
+                # New tag: embed and dedup
+                embedding = _kmcp_embed(label)
+                if not embedding:
+                    # Fallback: create the tag without embedding
+                    _create_tag_note(name, label, [])
+                    tag_library[name] = {
+                        "name": name, "embedding": [], "label_text": label,
+                        "article_count": 1, "concept_page": None,
+                        "first_seen": date_str, "last_seen": date_str,
+                    }
+                    article.topic_tags.append(name)
+                    continue
+
+                # Cosine dedup against existing library tags
+                best_match = None
+                best_score = 0.0
+                for lib_name, lib_info in tag_library.items():
+                    lib_emb = lib_info.get("embedding")
+                    if not lib_emb:
+                        continue
+                    score = _cosine_similarity(embedding, lib_emb)
+                    if score > best_score:
+                        best_score = score
+                        best_match = lib_name
+
+                if best_score > 0.90 and best_match:
+                    # Semantic duplicate: reuse existing tag
+                    article.topic_tags.append(best_match)
+                    tag_library[best_match]["article_count"] = (
+                        tag_library[best_match].get("article_count", 0) + 1
+                    )
+                    _update_tag_note(best_match, {
+                        "article_count": tag_library[best_match]["article_count"],
+                        "last_seen": date_str,
+                    })
+                else:
+                    # Genuinely new tag
+                    _create_tag_note(name, label, embedding)
+                    tag_library[name] = {
+                        "name": name, "embedding": embedding, "label_text": label,
+                        "article_count": 1, "concept_page": None,
+                        "first_seen": date_str, "last_seen": date_str,
+                    }
+                    article.topic_tags.append(name)
+
+    logger.info(
+        "process_tags: processed %d articles, tag library has %d tags",
+        len(articles), len(tag_library),
+    )
 
 
 def write_note(article: Article) -> bool:
@@ -267,8 +536,13 @@ def write_notes_fs(articles: list[Article]) -> tuple[int, int]:
         content = _make_note_content(article)
         now_iso = datetime.now(timezone.utc).isoformat()
 
+        # Build tags list with topic/ prefix for concept tags
+        tags = ["ai-agent", "type/episodic", article.source_tag]
+        for tag_name in getattr(article, 'topic_tags', []):
+            tags.append(f"topic/{tag_name}")
+
         frontmatter = {
-            "tags": ["ai-agent", "type/episodic", article.source_tag],
+            "tags": tags,
             "memory_type": "episodic",
             "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
             "ingested_at": now_iso,

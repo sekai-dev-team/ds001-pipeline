@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import re
 import sys
 from datetime import datetime, timezone
@@ -23,7 +24,7 @@ from pipeline.article import Article
 from pipeline.sources import fetch_all, all_sources
 from pipeline.llm_filter import filter_articles
 from pipeline.fulltext import url_pattern_hint
-from pipeline.knowledge_mcp import write_notes_fs, reindex_vault, write_digest
+from pipeline.knowledge_mcp import write_notes_fs, reindex_vault, write_digest, process_tags
 from pipeline.digest import generate_digest
 
 logging.basicConfig(
@@ -97,9 +98,17 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Step 3: LLM filter
     # ------------------------------------------------------------------
-    relevant_articles = filter_articles(unique_articles)
+    api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+    relevant_articles = filter_articles(unique_articles, api_key)
     articles_relevant = len(relevant_articles)
     logger.info("LLM filter: %d relevant articles", articles_relevant)
+
+    # ------------------------------------------------------------------
+    # Step 3.1: Tag processing (dedup + tag library management)
+    # ------------------------------------------------------------------
+    if relevant_articles:
+        process_tags(relevant_articles)
+        logger.info("Tag processing complete for %d articles", len(relevant_articles))
 
     # ------------------------------------------------------------------
     # Step 3.25: Section marker validation (v0.4.2)
