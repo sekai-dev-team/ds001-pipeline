@@ -409,13 +409,18 @@ def write_note(article: Article) -> bool:
     content = _make_note_content(article)
     now_iso = datetime.now(timezone.utc).isoformat()
 
+    # Build tags list with topic/ prefix for concept tags
+    tags = ["ai-agent", "type/episodic", article.source_tag]
+    for tag_name in getattr(article, 'topic_tags', []):
+        tags.append(f"topic/{tag_name}")
+
     payload = _rpc_payload("tools/call", {
         "name": "write_note",
         "arguments": {
             "path": filename,
             "content": content,
             "frontmatter": {
-                "tags": ["ai-agent", "type/episodic", article.source_tag],
+                "tags": tags,
                 "memory_type": "episodic",
                 "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
                 "ingested_at": now_iso,

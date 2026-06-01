@@ -24,7 +24,7 @@ from pipeline.article import Article
 from pipeline.sources import fetch_all, all_sources
 from pipeline.llm_filter import filter_articles
 from pipeline.fulltext import url_pattern_hint
-from pipeline.knowledge_mcp import write_notes_fs, reindex_vault, write_digest, process_tags
+from pipeline.knowledge_mcp import write_notes_fs, reindex_vault, write_digest, process_tags, _read_tag_library
 from pipeline.digest import generate_digest
 
 logging.basicConfig(
@@ -99,7 +99,8 @@ def main() -> None:
     # Step 3: LLM filter
     # ------------------------------------------------------------------
     api_key = os.environ.get("DEEPSEEK_API_KEY", "")
-    relevant_articles = filter_articles(unique_articles, api_key)
+    tag_library = _read_tag_library()
+    relevant_articles = filter_articles(unique_articles, api_key, tag_library)
     articles_relevant = len(relevant_articles)
     logger.info("LLM filter: %d relevant articles", articles_relevant)
 
