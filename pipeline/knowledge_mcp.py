@@ -146,7 +146,15 @@ def _kmcp_embed(text: str) -> list[float] | None:
         "arguments": {"text": text},
     })
     try:
-        resp = requests.post(KMCP_BASE_URL, json=payload, timeout=60)
+        resp = requests.post(
+            KMCP_BASE_URL,
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            json=payload,
+            timeout=60,
+        )
         resp.raise_for_status()
         result = resp.json()
         if "error" in result:
@@ -156,8 +164,8 @@ def _kmcp_embed(text: str) -> list[float] | None:
         if content and isinstance(content, list):
             text_content = content[0].get("text", "[]")
             return json.loads(text_content)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("k-mcp embed request failed: %s", exc)
     return None
 
 
