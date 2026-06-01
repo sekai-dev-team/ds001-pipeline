@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 DEEPSEEK_MODEL = "deepseek-chat"
-MAX_ARTICLES_PER_BATCH = 50
+MAX_ARTICLES_PER_BATCH = 20  # was 50 — reduced: structured summaries need more tokens
 
 SYSTEM_PROMPT = (
     "You are an AI news filter. For each article below:\n"
@@ -72,7 +72,7 @@ def _call_deepseek(articles: list[Article]) -> list[dict[str, Any]] | None:
             {"role": "user", "content": user_content},
         ],
         "temperature": 0.3,
-        "max_tokens": 4096,
+        "max_tokens": 16384,
     }
 
     try:
