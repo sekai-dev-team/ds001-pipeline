@@ -1,10 +1,17 @@
 """LLM-based article filtering and summarization via DeepSeek API.
 
-Uses DeepSeek V4 (deepseek-chat) with temperature 0.3 to determine
-relevance and generate Chinese summaries.
+Uses DeepSeek V4 (deepseek-chat) with temperature 0.3.
 
-Each article is processed in its own API call (no batching) with up to
-5 concurrent workers via ThreadPoolExecutor.
+Two-pass pipeline (v0.5):
+
+**Pass 1** — Relevance classification (5 workers, ``max_tokens=256``).
+  Uses only the RSS summary to determine relevance and content type.
+
+  → Fulltext extraction for all Pass-1-passed articles.
+
+**Pass 2** — Summarization (3 workers, ``max_tokens=1024``).
+  Generates structured Chinese summaries using the first 4000 characters
+  of fulltext. Falls back to RSS summary when fulltext is unavailable.
 """
 
 from __future__ import annotations
@@ -18,13 +25,14 @@ from typing import Any
 import requests
 
 from pipeline.article import Article
+from pipeline.fulltext import fetch_fulltext
 
 logger = logging.getLogger(__name__)
 
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 DEEPSEEK_MODEL = "deepseek-chat"
 
-SYSTEM_PROMPT = (
+RELEVANCE_PROMPT = (
     "You are an AI news filter. For the article below:\n"
     "1. Classify its content type:\n"
     '   - "article": substantive blog, news, research write-up -- the target\n'
@@ -37,42 +45,36 @@ SYSTEM_PROMPT = (
     "AI agents, open-source AI, or AI engineering paradigms.\n"
     "   Both ``article`` and ``discussion`` content types can be relevant.\n"
     "   Only ``link_only`` and ``low_quality`` should be rejected outright.\n"
-    "3. If relevant, generate a Chinese summary with these structured sections:\n"
-    "   **主题:** [1 sentence — what the article is about]\n"
-    "   **方法/发现:** [2-3 sentences — key method, result, or insight]\n"
-    "   **意义:** [1 sentence — why it matters]\n"
-    "   Total: at least 150 Chinese characters, at most 500.\n"
-    'Return a JSON object with keys: relevant (bool), ai_summary (string), '
-    'content_type (string).\n'
+    'Return a JSON object with keys: relevant (bool), content_type (string).\n'
+    "Always return valid JSON."
+)
+
+SUMMARIZE_PROMPT = (
+    "You are an AI news summarizer. For the article below, "
+    "generate a Chinese summary with these structured sections:\n"
+    "**主题:** [1 sentence — what the article is about]\n"
+    "**方法/发现:** [2-3 sentences — key method, result, or insight]\n"
+    "**意义:** [1 sentence — why it matters]\n"
+    "Total: at least 150 Chinese characters, at most 500.\n"
+    'Return a JSON object with key: ai_summary (string).\n'
     "Always return valid JSON."
 )
 
 
-def _call_deepseek_single(article: Article) -> dict[str, Any] | None:
-    """Send a single article to DeepSeek for filtering.
+def _call_deepseek(api_key: str, prompt: str, text: str, max_tokens: int) -> dict[str, Any] | None:
+    """Shared DeepSeek API call helper.
 
-    Returns a dict with ``relevant``, ``ai_summary``, and
-    ``content_type`` keys, or *None* on failure.
+    Sends *text* to DeepSeek with *prompt* as the system message and
+    returns the parsed JSON response dict, or *None* on failure.
     """
-    api_key = os.environ.get("DEEPSEEK_API_KEY")
-    if not api_key:
-        logger.error("DEEPSEEK_API_KEY environment variable not set")
-        return None
-
-    article_text = (
-        f"Title: {article.title}\n"
-        f"Summary: {article.summary[:300]}\n"
-        f"URL: {article.url}"
-    )
-
     payload = {
         "model": DEEPSEEK_MODEL,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": article_text},
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": text},
         ],
         "temperature": 0.3,
-        "max_tokens": 1024,
+        "max_tokens": max_tokens,
     }
 
     try:
@@ -93,42 +95,107 @@ def _call_deepseek_single(article: Article) -> dict[str, Any] | None:
         # Strip markdown code fences if present
         cleaned = raw.strip()
         if cleaned.startswith("```"):
-            # Remove opening fence (possibly with language hint)
             cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
 
-        result: dict[str, Any] = json.loads(cleaned)
-        return result
+        return json.loads(cleaned)
 
     except requests.exceptions.Timeout:
-        logger.error("DeepSeek API timeout for article: %s", article.title)
         return None
-    except requests.exceptions.RequestException as exc:
-        logger.error("DeepSeek API request failed for '%s': %s", article.title, exc)
+    except requests.exceptions.RequestException:
         return None
-    except (json.JSONDecodeError, KeyError, IndexError) as exc:
-        logger.error("Failed to parse DeepSeek response for '%s': %s", article.title, exc)
+    except (json.JSONDecodeError, KeyError, IndexError):
         return None
+
+
+def _call_deepseek_relevance(article: Article) -> dict[str, Any] | None:
+    """Pass 1: Quick relevance check using only the RSS summary.
+
+    Returns a dict with ``relevant`` (bool) and ``content_type`` (string)
+    keys, or *None* on failure.  ``max_tokens=256`` — just classification,
+    no summary generation.
+    """
+    api_key = os.environ.get("DEEPSEEK_API_KEY")
+    if not api_key:
+        logger.error("DEEPSEEK_API_KEY environment variable not set")
+        return None
+
+    text = (
+        f"Title: {article.title}\n"
+        f"Summary: {article.summary[:300]}\n"
+        f"URL: {article.url}"
+    )
+
+    result = _call_deepseek(api_key, RELEVANCE_PROMPT, text, max_tokens=256)
+    if result is None:
+        logger.error("DeepSeek relevance check failed for: %s", article.title)
+    return result
+
+
+def _call_deepseek_summarize(article: Article) -> dict[str, Any] | None:
+    """Pass 2: Full summarization using article fulltext.
+
+    Uses the first 4000 characters of ``article.fulltext`` when available.
+    Falls back to the RSS summary (``article.summary``, first 300 chars)
+    for articles where fulltext extraction failed.
+
+    Returns a dict with ``ai_summary`` (string) key, or *None* on failure.
+    ``max_tokens=1024`` — budget for structured Chinese summary.
+    """
+    api_key = os.environ.get("DEEPSEEK_API_KEY")
+    if not api_key:
+        logger.error("DEEPSEEK_API_KEY environment variable not set")
+        return None
+
+    # Prefer fulltext (first 4000 chars); fall back to RSS summary
+    if article.has_fulltext and article.fulltext:
+        source_text = article.fulltext[:4000]
+    else:
+        source_text = article.summary[:300]
+
+    text = (
+        f"Title: {article.title}\n"
+        f"Content: {source_text}\n"
+        f"URL: {article.url}"
+    )
+
+    result = _call_deepseek(api_key, SUMMARIZE_PROMPT, text, max_tokens=1024)
+    if result is None:
+        logger.error("DeepSeek summarization failed for: %s", article.title)
+    return result
 
 
 def filter_articles(articles: list[Article]) -> list[Article]:
-    """Filter and summarize articles using DeepSeek API.
+    """Two-pass filter: relevance check → fulltext extraction → summarization.
 
-    Each article is processed in its own API call (no batching) with up to
-    5 concurrent workers via ``ThreadPoolExecutor``.
+    **Pass 1** (5 workers via ``ThreadPoolExecutor``):
+    Quick relevance classification using only the RSS summary
+    (``_call_deepseek_relevance``, ``max_tokens=256``).
+
+    **Fulltext extraction** (sequential, via :func:`pipeline.fulltext.fetch_fulltext`):
+    Fetch full HTML content for every article that passed Pass 1.
+
+    **Pass 2** (3 workers via ``ThreadPoolExecutor``):
+    Generate structured Chinese summaries using the first 4000 characters of
+    fulltext (``_call_deepseek_summarize``, ``max_tokens=1024``).  Falls back
+    to the RSS summary for articles where fulltext extraction failed.
+
     Errors are isolated per article — one failure does not affect others.
     Each article is updated in-place with ``relevant``, ``ai_summary``,
-    and ``content_type``.
+    ``content_type``, ``fulltext``, and ``has_fulltext``.
     Only articles deemed relevant AND classified as "article" or "discussion"
-    content type are returned. ``link_only`` and ``low_quality`` are rejected.
+    content type are returned.  ``link_only`` and ``low_quality`` are rejected.
     """
     if not articles:
         return []
 
-    relevant_articles: list[Article] = []
+    # ------------------------------------------------------------------
+    # Pass 1: Relevance check (5 workers, RSS summary only)
+    # ------------------------------------------------------------------
+    pass1_passed: list[Article] = []
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
         future_to_article: dict[concurrent.futures.Future, Article] = {
-            executor.submit(_call_deepseek_single, article): article
+            executor.submit(_call_deepseek_relevance, article): article
             for article in articles
         }
 
@@ -138,27 +205,71 @@ def filter_articles(articles: list[Article]) -> list[Article]:
                 result = future.result()
                 if result is None:
                     logger.info(
-                        "LLM filter: no result for '%s', marking not relevant",
+                        "Pass 1: no result for '%s', marking not relevant",
                         article.title,
                     )
                     continue
 
                 article.relevant = bool(result.get("relevant", False))
-                article.ai_summary = result.get("ai_summary", "")
                 article.content_type = result.get("content_type", None)
 
                 if article.relevant and article.content_type in ("article", "discussion"):
-                    relevant_articles.append(article)
+                    pass1_passed.append(article)
 
             except Exception as exc:
                 logger.error(
-                    "LLM filter error for article '%s': %s",
-                    article.title, exc,
+                    "Pass 1 error for '%s': %s", article.title, exc,
                 )
 
     logger.info(
-        "LLM filter: %d relevant+article/discussion out of %d articles",
-        len(relevant_articles),
-        len(articles),
+        "Pass 1: %d relevant+article/discussion out of %d articles",
+        len(pass1_passed), len(articles),
     )
-    return relevant_articles
+
+    if not pass1_passed:
+        return []
+
+    # ------------------------------------------------------------------
+    # Fulltext extraction for Pass 1 results
+    # ------------------------------------------------------------------
+    fulltext_success = 0
+    for article in pass1_passed:
+        result = fetch_fulltext(article.url)
+        if result is not None:
+            article.fulltext = result
+            article.has_fulltext = True
+            fulltext_success += 1
+        else:
+            article.has_fulltext = False
+
+    logger.info(
+        "Fulltext: %d/%d extracted for relevant articles",
+        fulltext_success, len(pass1_passed),
+    )
+
+    # ------------------------------------------------------------------
+    # Pass 2: Summarization (3 workers, fulltext first 4000 chars)
+    # ------------------------------------------------------------------
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        future_to_article = {
+            executor.submit(_call_deepseek_summarize, article): article
+            for article in pass1_passed
+        }
+
+        for future in concurrent.futures.as_completed(future_to_article):
+            article = future_to_article[future]
+            try:
+                result = future.result()
+                if result is not None:
+                    article.ai_summary = result.get("ai_summary", "")
+            except Exception as exc:
+                logger.error(
+                    "Pass 2 error for '%s': %s", article.title, exc,
+                )
+
+    logger.info(
+        "Pass 2: summarization complete for %d articles",
+        len(pass1_passed),
+    )
+
+    return pass1_passed

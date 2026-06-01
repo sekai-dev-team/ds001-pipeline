@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from pipeline.article import Article
 from pipeline.sources import fetch_all, all_sources
 from pipeline.llm_filter import filter_articles
-from pipeline.fulltext import fetch_fulltext, url_pattern_hint
+from pipeline.fulltext import url_pattern_hint
 from pipeline.knowledge_mcp import write_notes_fs, reindex_vault, write_digest
 from pipeline.digest import generate_digest
 
@@ -124,29 +124,11 @@ def main() -> None:
     relevant_articles = validated_articles
 
     # ------------------------------------------------------------------
-    # Step 3.5: Fulltext extraction
-    # ------------------------------------------------------------------
-    fulltext_success = 0
-    for article in relevant_articles:
-        result = fetch_fulltext(article.url)
-        if result is not None:
-            article.fulltext = result
-            article.has_fulltext = True
-            fulltext_success += 1
-        else:
-            article.has_fulltext = False
-            logger.warning("Fulltext extraction failed for: %s", article.url)
-
-    total_relevant = len(relevant_articles)
-    logger.info(
-        "Fulltext: %d/%d extracted successfully",
-        fulltext_success,
-        total_relevant,
-    )
-
-    # ------------------------------------------------------------------
     # Step 3.75: Quality filtering (post-extraction thresholds)
     # ------------------------------------------------------------------
+    # (Fulltext extraction now happens inside filter_articles() between
+    # Pass 1 and Pass 2.  article.fulltext and article.has_fulltext are
+    # already populated.)
     quality_articles: list[Article] = []
     quality_rejected = 0
     MIN_SUMMARY_CHARS = 150  # was 50; raised to 150 per v0.4.2 spec
