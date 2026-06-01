@@ -104,7 +104,8 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Step 3.25: Section marker validation (v0.4.2)
     # ------------------------------------------------------------------
-    SECTION_MARKER_RE = re.compile(r'\*\*(?:主题|方法|发现|意义):\*\*')
+    # v0.5: match both standalone markers (方法:, 发现:) and combined (方法/发现:)
+    SECTION_MARKER_RE = re.compile(r'\*\*(?:主题|方法(?:/发现)?|发现|意义):\*\*')
     validated_articles: list[Article] = []
     for article in relevant_articles:
         if SECTION_MARKER_RE.search(article.ai_summary):
