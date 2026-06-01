@@ -586,7 +586,7 @@ def reindex_vault() -> bool:
     """Send a single ``reindex`` RPC call to k-mcp to bulk-reindex all notes.
 
     Call this **once** after ``write_notes_fs()`` finishes writing all files.
-    Uses a longer timeout (360 s) because a full rebuild touches every .md
+    Uses a longer timeout (600 s) because a full rebuild touches every .md
     file in the vault and may invoke the embedding model many times in
     sequence (but crucially, within a single process that does not stack
     incremental-index overhead).
@@ -602,35 +602,59 @@ def reindex_vault() -> bool:
         "arguments": {},
     })
 
-    try:
-        resp = requests.post(
-            KMCP_BASE_URL,
-            headers={
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            },
-            json=payload,
-            timeout=360,  # bulk reindex can take minutes with embedding model
-        )
-        resp.raise_for_status()
-        result = resp.json()
+    max_retries = 2
+    retry_delay = 30
 
-        if "error" in result:
-            logger.error("k-mcp reindex returned error: %s", result["error"])
+    for attempt in range(max_retries + 1):
+        try:
+            resp = requests.post(
+                KMCP_BASE_URL,
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                },
+                json=payload,
+                timeout=600,  # bulk reindex can take minutes with embedding model
+            )
+            resp.raise_for_status()
+            result = resp.json()
+
+            if "error" in result:
+                logger.error("k-mcp reindex returned error: %s", result["error"])
+                return False
+
+            logger.info("Vault reindex succeeded: %s", result.get("result", "ok"))
+            return True
+
+        except requests.exceptions.Timeout:
+            if attempt < max_retries:
+                logger.warning(
+                    "k-mcp reindex timed out (attempt %d/%d), retrying in %ds",
+                    attempt + 1, max_retries, retry_delay,
+                )
+                time.sleep(retry_delay)
+            else:
+                logger.error("k-mcp reindex timed out after %ds and %d retries", 600, max_retries)
+                return False
+        except requests.exceptions.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else 0
+            if 500 <= status < 600 and attempt < max_retries:
+                logger.warning(
+                    "k-mcp reindex got %d (attempt %d/%d), retrying in %ds",
+                    status, attempt + 1, max_retries, retry_delay,
+                )
+                time.sleep(retry_delay)
+            else:
+                logger.error("k-mcp reindex request failed: %s", exc)
+                return False
+        except requests.exceptions.RequestException as exc:
+            logger.error("k-mcp reindex request failed: %s", exc)
+            return False
+        except Exception as exc:
+            logger.error("Unexpected error during reindex: %s", exc)
             return False
 
-        logger.info("Vault reindex succeeded: %s", result.get("result", "ok"))
-        return True
-
-    except requests.exceptions.Timeout:
-        logger.error("k-mcp reindex timed out after 360s")
-        return False
-    except requests.exceptions.RequestException as exc:
-        logger.error("k-mcp reindex request failed: %s", exc)
-        return False
-    except Exception as exc:
-        logger.error("Unexpected error during reindex: %s", exc)
-        return False
+    return False  # Should not be reached
 
 
 def write_digest(digest_md: str, timestamp: str) -> bool:
