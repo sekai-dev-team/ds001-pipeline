@@ -2,10 +2,14 @@
 
 Uses DeepSeek V4 (deepseek-chat) with temperature 0.3 to determine
 relevance and generate Chinese summaries.
+
+Each article is processed in its own API call (no batching) with up to
+5 concurrent workers via ThreadPoolExecutor.
 """
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import logging
 import os
@@ -19,10 +23,9 @@ logger = logging.getLogger(__name__)
 
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 DEEPSEEK_MODEL = "deepseek-chat"
-MAX_ARTICLES_PER_BATCH = 20  # was 50 — reduced: structured summaries need more tokens
 
 SYSTEM_PROMPT = (
-    "You are an AI news filter. For each article below:\n"
+    "You are an AI news filter. For the article below:\n"
     "1. Classify its content type:\n"
     '   - "article": substantive blog, news, research write-up -- the target\n'
     '   - "discussion": HN thread, Reddit post, forum -- may still be relevant\n'
@@ -39,15 +42,16 @@ SYSTEM_PROMPT = (
     "   **方法/发现:** [2-3 sentences — key method, result, or insight]\n"
     "   **意义:** [1 sentence — why it matters]\n"
     "   Total: at least 150 Chinese characters, at most 400.\n"
-    'Return a JSON array of {{relevant: bool, ai_summary: string, content_type: string}}.\n'
-    "Always return valid JSON, one object per input article in the same order."
+    'Return a JSON object with keys: relevant (bool), ai_summary (string), '
+    'content_type (string).\n'
+    "Always return valid JSON."
 )
 
 
-def _call_deepseek(articles: list[Article]) -> list[dict[str, Any]] | None:
-    """Send a batch of articles to DeepSeek for filtering.
+def _call_deepseek_single(article: Article) -> dict[str, Any] | None:
+    """Send a single article to DeepSeek for filtering.
 
-    Returns a list of dicts with ``relevant``, ``ai_summary``, and
+    Returns a dict with ``relevant``, ``ai_summary``, and
     ``content_type`` keys, or *None* on failure.
     """
     api_key = os.environ.get("DEEPSEEK_API_KEY")
@@ -55,24 +59,20 @@ def _call_deepseek(articles: list[Article]) -> list[dict[str, Any]] | None:
         logger.error("DEEPSEEK_API_KEY environment variable not set")
         return None
 
-    article_texts = []
-    for i, a in enumerate(articles, 1):
-        article_texts.append(
-            f"[{i}] Title: {a.title}\n    Summary: {a.summary[:300]}\n    URL: {a.url}"
-        )
-
-    user_content = (
-        "Please analyze these articles:\n\n" + "\n---\n".join(article_texts)
+    article_text = (
+        f"Title: {article.title}\n"
+        f"Summary: {article.summary[:300]}\n"
+        f"URL: {article.url}"
     )
 
     payload = {
         "model": DEEPSEEK_MODEL,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_content},
+            {"role": "user", "content": article_text},
         ],
         "temperature": 0.3,
-        "max_tokens": 16384,
+        "max_tokens": 1024,
     }
 
     try:
@@ -96,24 +96,26 @@ def _call_deepseek(articles: list[Article]) -> list[dict[str, Any]] | None:
             # Remove opening fence (possibly with language hint)
             cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
 
-        results: list[dict[str, Any]] = json.loads(cleaned)
-        return results
+        result: dict[str, Any] = json.loads(cleaned)
+        return result
 
     except requests.exceptions.Timeout:
-        logger.error("DeepSeek API timeout after 120s")
+        logger.error("DeepSeek API timeout for article: %s", article.title)
         return None
     except requests.exceptions.RequestException as exc:
-        logger.error("DeepSeek API request failed: %s", exc)
+        logger.error("DeepSeek API request failed for '%s': %s", article.title, exc)
         return None
     except (json.JSONDecodeError, KeyError, IndexError) as exc:
-        logger.error("Failed to parse DeepSeek response: %s", exc)
+        logger.error("Failed to parse DeepSeek response for '%s': %s", article.title, exc)
         return None
 
 
 def filter_articles(articles: list[Article]) -> list[Article]:
     """Filter and summarize articles using DeepSeek API.
 
-    Articles are processed in batches of *MAX_ARTICLES_PER_BATCH*.
+    Each article is processed in its own API call (no batching) with up to
+    5 concurrent workers via ``ThreadPoolExecutor``.
+    Errors are isolated per article — one failure does not affect others.
     Each article is updated in-place with ``relevant``, ``ai_summary``,
     and ``content_type``.
     Only articles deemed relevant AND classified as "article" or "discussion"
@@ -123,33 +125,36 @@ def filter_articles(articles: list[Article]) -> list[Article]:
         return []
 
     relevant_articles: list[Article] = []
-    # Sort by summary length to group similar content types together.
-    # Short-form sources (Nitter, Google News) and long-form sources (HN,
-    # arXiv, blogs) get batched separately, preventing LLM from making
-    # relative quality judgments across content types.
-    sorted_articles = sorted(articles, key=lambda a: len(a.summary or ""))
-    batches = [
-        sorted_articles[i : i + MAX_ARTICLES_PER_BATCH]
-        for i in range(0, len(sorted_articles), MAX_ARTICLES_PER_BATCH)
-    ]
-    total_batches = len(batches)
 
-    for batch_idx, batch in enumerate(batches, 1):
-        logger.info(
-            "Filtering batch %d/%d (%d articles)...",
-            batch_idx, total_batches, len(batch),
-        )
-        results = _call_deepseek(batch)
-        if results is None:
-            logger.warning("LLM filter failed for batch of %d articles, marking all as not relevant", len(batch))
-            continue
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        future_to_article: dict[concurrent.futures.Future, Article] = {
+            executor.submit(_call_deepseek_single, article): article
+            for article in articles
+        }
 
-        for article, result in zip(batch, results):
-            article.relevant = bool(result.get("relevant", False))
-            article.ai_summary = result.get("ai_summary", "")
-            article.content_type = result.get("content_type", None)
-            if article.relevant and article.content_type in ("article", "discussion"):
-                relevant_articles.append(article)
+        for future in concurrent.futures.as_completed(future_to_article):
+            article = future_to_article[future]
+            try:
+                result = future.result()
+                if result is None:
+                    logger.info(
+                        "LLM filter: no result for '%s', marking not relevant",
+                        article.title,
+                    )
+                    continue
+
+                article.relevant = bool(result.get("relevant", False))
+                article.ai_summary = result.get("ai_summary", "")
+                article.content_type = result.get("content_type", None)
+
+                if article.relevant and article.content_type in ("article", "discussion"):
+                    relevant_articles.append(article)
+
+            except Exception as exc:
+                logger.error(
+                    "LLM filter error for article '%s': %s",
+                    article.title, exc,
+                )
 
     logger.info(
         "LLM filter: %d relevant+article/discussion out of %d articles",
