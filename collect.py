@@ -102,6 +102,28 @@ def main() -> None:
     logger.info("LLM filter: %d relevant articles", articles_relevant)
 
     # ------------------------------------------------------------------
+    # Step 3.25: Section marker validation (v0.4.2)
+    # ------------------------------------------------------------------
+    SECTION_MARKER_RE = re.compile(r'\*\*(?:主题|方法|发现|意义):\*\*')
+    validated_articles: list[Article] = []
+    for article in relevant_articles:
+        if SECTION_MARKER_RE.search(article.ai_summary):
+            validated_articles.append(article)
+        else:
+            logger.warning(
+                "Section-marker reject: %s (ai_summary lacks **主题:**, "
+                "**方法:**, **发现:**, or **意义:** markers)",
+                article.title,
+            )
+    rejected_markers = articles_relevant - len(validated_articles)
+    if rejected_markers:
+        logger.warning(
+            "Section-marker filter: %d/%d articles rejected for missing "
+            "required markers", rejected_markers, articles_relevant,
+        )
+    relevant_articles = validated_articles
+
+    # ------------------------------------------------------------------
     # Step 3.5: Fulltext extraction
     # ------------------------------------------------------------------
     fulltext_success = 0
@@ -127,7 +149,7 @@ def main() -> None:
     # ------------------------------------------------------------------
     quality_articles: list[Article] = []
     quality_rejected = 0
-    MIN_SUMMARY_CHARS = 50  # only reject truly empty summaries (was 200)
+    MIN_SUMMARY_CHARS = 150  # was 50; raised to 150 per v0.4.2 spec
 
     for article in relevant_articles:
         url_hint = url_pattern_hint(article.url)

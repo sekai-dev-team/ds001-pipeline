@@ -34,7 +34,11 @@ SYSTEM_PROMPT = (
     "AI agents, open-source AI, or AI engineering paradigms.\n"
     "   Both ``article`` and ``discussion`` content types can be relevant.\n"
     "   Only ``link_only`` and ``low_quality`` should be rejected outright.\n"
-    "3. If relevant, generate a 2-3 sentence Chinese summary.\n"
+    "3. If relevant, generate a Chinese summary with these structured sections:\n"
+    "   **主题:** [1 sentence — what the article is about]\n"
+    "   **方法/发现:** [2-3 sentences — key method, result, or insight]\n"
+    "   **意义:** [1 sentence — why it matters]\n"
+    "   Total: at least 150 Chinese characters, at most 400.\n"
     'Return a JSON array of {{relevant: bool, ai_summary: string, content_type: string}}.\n'
     "Always return valid JSON, one object per input article in the same order."
 )
