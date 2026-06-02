@@ -84,6 +84,7 @@ def _call_deepseek(api_key: str, prompt: str, text: str, max_tokens: int, model:
         ],
         "temperature": 0.3,
         "max_tokens": max_tokens,
+        "thinking": {"type": "disabled"},
     }
 
     try:

@@ -81,6 +81,7 @@ def _call_deepseek_for_signals(articles: list[Article]) -> list[dict[str, Any]] 
         ],
         "temperature": 0.3,
         "max_tokens": 8192,
+        "thinking": {"type": "disabled"},
     }
 
     try:
