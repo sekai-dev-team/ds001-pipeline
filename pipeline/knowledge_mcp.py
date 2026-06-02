@@ -409,10 +409,11 @@ def write_note(article: Article) -> bool:
 
     Returns ``True`` on success, ``False`` on failure.
     """
-    # Build a safe filename from the article title
+    # Build a safe filename from the article title with date prefix
     safe_name = "".join(c if c.isalnum() or c in " -_" else "_" for c in article.title)
     safe_name = safe_name.strip().replace(" ", "_")[:120] or "untitled"
-    filename = f"{safe_name}.md"
+    date_prefix = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    filename = f"{date_prefix}_{safe_name}.md"
 
     content = _make_note_content(article)
     now_iso = datetime.now(timezone.utc).isoformat()

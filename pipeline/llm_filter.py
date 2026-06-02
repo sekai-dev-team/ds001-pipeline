@@ -268,9 +268,9 @@ def filter_articles(
         future_to_article: dict[concurrent.futures.Future, Article] = {}
 
         for article in pass1_passed:
-            # Prepare article text (prefer fulltext first 4000 chars, fall back to RSS summary)
+            # Prepare article text (prefer fulltext, fall back to RSS summary)
             if article.has_fulltext and article.fulltext:
-                source_text = article.fulltext[:4000]
+                source_text = article.fulltext
             else:
                 source_text = article.summary[:300]
 

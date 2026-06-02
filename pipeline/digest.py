@@ -69,7 +69,7 @@ def _call_deepseek_for_signals(articles: list[Article]) -> list[dict[str, Any]] 
         )
 
     user_content = (
-        "Analyze these articles and extract 3-5 key signals:\n\n"
+        "请分析以下文章，提炼出3-5个关键信号：\n\n"
         + "\n---\n".join(article_texts)
     )
 
