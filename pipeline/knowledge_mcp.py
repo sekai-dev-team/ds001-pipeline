@@ -657,7 +657,7 @@ def reindex_vault() -> bool:
     return False  # Should not be reached
 
 
-def write_digest(digest_md: str, timestamp: str) -> bool:
+def write_digest(digest_md: str, timestamp: str, mode: str) -> bool:
     """Write the daily digest markdown document to the knowledge-mcp vault.
 
     Parameters
@@ -665,7 +665,10 @@ def write_digest(digest_md: str, timestamp: str) -> bool:
     digest_md:
         The complete markdown digest content.
     timestamp:
-        ISO-8601 pipeline timestamp (used to derive the date for the filename).
+        ISO-8601 pipeline timestamp (used to derive the date and time for the filename).
+    mode:
+        Pipeline mode (e.g. ``"daily"`` or ``"hn-arxiv"``), used to disambiguate
+        multiple runs on the same day.
 
     Returns
     -------
@@ -676,10 +679,13 @@ def write_digest(digest_md: str, timestamp: str) -> bool:
     try:
         dt = datetime.fromisoformat(timestamp)
         date_str = dt.strftime("%Y-%m-%d")
+        time_str = dt.strftime("%H%M")
     except (ValueError, TypeError):
-        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        now = datetime.now(timezone.utc)
+        date_str = now.strftime("%Y-%m-%d")
+        time_str = now.strftime("%H%M")
 
-    filename = f"daily-digest/{date_str}.md"
+    filename = f"daily-digest/{date_str}_{mode}_{time_str}.md"
 
     # Initialize MCP session before tool call
     if not _initialize():

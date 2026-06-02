@@ -224,7 +224,7 @@ def main() -> None:
             len(ingested_articles),
         )
         digest_md = generate_digest(ingested_articles, mode, timestamp, per_source=per_source)
-        if write_digest(digest_md, timestamp):
+        if write_digest(digest_md, timestamp, mode=mode):
             logger.info("Digest saved to vault")
         else:
             logger.warning("Digest could not be saved to vault")
