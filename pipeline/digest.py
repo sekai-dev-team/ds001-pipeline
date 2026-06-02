@@ -26,17 +26,17 @@ DEEPSEEK_MODEL = "deepseek-chat"
 MAX_ARTICLES_PER_BATCH = 25
 
 SIGNAL_SYSTEM_PROMPT = (
-    "You are an AI research analyst producing a daily intelligence digest. "
-    "Below is a batch of articles about AI architecture, LLMs, AI agents, "
-    "open-source AI, and AI engineering paradigms.\n\n"
-    "Extract 3-5 key signals or themes that emerge ACROSS these articles. "
-    "Do NOT summarize each article individually. Instead, identify cross-cutting "
-    "patterns, emerging trends, or important developments.\n\n"
-    'Return a JSON array of objects, each with:\n'
-    '  - "name": short signal name (2-6 words, concise)\n'
-    '  - "why": 1-2 sentence explanation of why this signal matters\n'
-    '  - "articles": list of article TITLES (exact match) that relate to this signal\n\n'
-    "Return ONLY valid JSON, no extra text, no markdown fences."
+    "你是一名AI研究分析师，负责生成每日情报摘要。"
+    "以下是一批关于AI架构、大语言模型、AI智能体、"
+    "开源AI以及AI工程范式的文章。\n\n"
+    "请从这些文章中提炼出3-5个跨文章的关键信号或主题。"
+    "不要逐一总结每篇文章，而是要识别跨领域的模式、"
+    "新兴趋势或重要进展。\n\n"
+    '返回一个JSON数组，每个对象包含以下字段：\n'
+    '  - "name": 简短的信号名称（2-6个汉字，简洁明了）\n'
+    '  - "why": 1-2句话解释为什么这个信号值得关注（使用中文）\n'
+    '  - "articles": 与该信号相关的文章标题列表（精确匹配英文原标题）\n\n'
+    "仅返回有效的JSON，不要添加额外文字，不要使用Markdown代码块。"
 )
 
 
