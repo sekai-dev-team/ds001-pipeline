@@ -160,9 +160,6 @@ def _render_article_list(articles: list[Article]) -> str:
     lines = [f"## 📋 摄入文章 ({len(articles)}篇)"]
     for idx, article in enumerate(articles, 1):
         summary = (article.ai_summary or article.summary or "No summary available")
-        # Truncate long summaries for digest readability
-        if len(summary) > 200:
-            summary = summary[:197] + "..."
         lines.append(f"{idx}. **{article.title}** [{article.source_name}]")
         lines.append(f"   {summary}")
     return "\n".join(lines)
