@@ -22,7 +22,7 @@ from pipeline.article import Article
 logger = logging.getLogger(__name__)
 
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
-DEEPSEEK_MODEL = "deepseek-chat"
+DEEPSEEK_MODEL = "deepseek-v4-pro"
 MAX_ARTICLES_PER_BATCH = 25
 
 SIGNAL_SYSTEM_PROMPT = (
@@ -80,7 +80,7 @@ def _call_deepseek_for_signals(articles: list[Article]) -> list[dict[str, Any]] 
             {"role": "user", "content": user_content},
         ],
         "temperature": 0.3,
-        "max_tokens": 4096,
+        "max_tokens": 8192,
     }
 
     try:

@@ -31,7 +31,8 @@ from pipeline.fulltext import fetch_fulltext
 logger = logging.getLogger(__name__)
 
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
-DEEPSEEK_MODEL = "deepseek-chat"
+DEEPSEEK_MODEL = "deepseek-chat"  # Pass 1: fast/cheap relevance filter
+DEEPSEEK_SUMMARIZE_MODEL = "deepseek-v4-pro"  # Pass 2: high-quality summarization
 
 RELEVANCE_PROMPT = (
     "You are an AI news filter. For the article below:\n"
@@ -69,14 +70,14 @@ SUMMARIZE_PROMPT = (
 )
 
 
-def _call_deepseek(api_key: str, prompt: str, text: str, max_tokens: int) -> dict[str, Any] | None:
+def _call_deepseek(api_key: str, prompt: str, text: str, max_tokens: int, model: str = DEEPSEEK_MODEL) -> dict[str, Any] | None:
     """Shared DeepSeek API call helper.
 
     Sends *text* to DeepSeek with *prompt* as the system message and
     returns the parsed JSON response dict, or *None* on failure.
     """
     payload = {
-        "model": DEEPSEEK_MODEL,
+        "model": model,
         "messages": [
             {"role": "system", "content": prompt},
             {"role": "user", "content": text},
@@ -153,7 +154,7 @@ def _call_deepseek_summarize(
     """
     prompt = SUMMARIZE_PROMPT.format(known_tags=known_tags or "(no known tags yet)")
 
-    result = _call_deepseek(api_key, prompt, article_text, max_tokens=1536)
+    result = _call_deepseek(api_key, prompt, article_text, max_tokens=1536, model=DEEPSEEK_SUMMARIZE_MODEL)
     if result is None:
         return None
 
