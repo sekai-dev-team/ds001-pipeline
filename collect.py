@@ -13,12 +13,16 @@ Modes:
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 import json
 import logging
 import os
 import re
 import sys
 from datetime import datetime, timezone
+from urllib.request import Request, urlopen
+from urllib.error import URLError
 
 from pipeline.article import Article
 from pipeline.sources import fetch_all, all_sources
@@ -45,9 +49,21 @@ def main() -> None:
         choices=["daily", "hn-arxiv"],
         help="Pipeline mode: daily (all sources) or hn-arxiv (HN + arXiv only)",
     )
+    parser.add_argument(
+        "--webhook-url",
+        default=os.environ.get("DS001_WEBHOOK_URL", ""),
+        help="Hermes webhook URL to POST digest to (e.g. http://hermes:8644/webhooks/ds001-digest)",
+    )
+    parser.add_argument(
+        "--webhook-secret",
+        default=os.environ.get("DS001_WEBHOOK_SECRET", ""),
+        help="HMAC-SHA256 secret for webhook signing (optional)",
+    )
     args = parser.parse_args()
 
     mode = args.mode
+    webhook_url = args.webhook_url
+    webhook_secret = args.webhook_secret
     pipeline_name = f"ds001-{mode}"
     timestamp = datetime.now(timezone.utc).isoformat()
 
@@ -218,6 +234,7 @@ def main() -> None:
         per_source[article.source_name]["ingested"] += 1
 
     ingested_articles = quality_articles[:ingested] if quality_articles else []
+    digest_md = None
     if ingested_articles:
         logger.info(
             "Generating daily digest for %d ingested articles...",
@@ -252,6 +269,34 @@ def main() -> None:
 
     print()
     print(json.dumps(stats, indent=2, ensure_ascii=False))
+
+    # ------------------------------------------------------------------
+    # Step 5.5: Webhook callback
+    # ------------------------------------------------------------------
+    if webhook_url and digest_md:
+        logger.info("Posting digest to webhook: %s", webhook_url)
+        payload = json.dumps({
+            "event": "daily_digest",
+            "pipeline": pipeline_name,
+            "timestamp": timestamp,
+            "articles_ingested": ingested,
+            "digest": digest_md,
+            "stats": stats,
+        }, ensure_ascii=False).encode("utf-8")
+
+        headers = {"Content-Type": "application/json"}
+        if webhook_secret:
+            sig = hmac.new(
+                webhook_secret.encode("utf-8"), payload, hashlib.sha256
+            ).hexdigest()
+            headers["X-Hub-Signature-256"] = f"sha256={sig}"
+
+        try:
+            req = Request(webhook_url, data=payload, headers=headers, method="POST")
+            with urlopen(req, timeout=30) as resp:
+                logger.info("Webhook response: %s", resp.status)
+        except (URLError, OSError) as exc:
+            logger.warning("Webhook POST failed: %s", exc)
 
     # ------------------------------------------------------------------
     # Step 6: Exit code
