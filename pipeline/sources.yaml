@@ -23,6 +23,11 @@ sources:
     tag: "source/anthropic-news"
     window: 24
 
+  - name: "GitHub Trending"
+    url: "https://mshibanami.github.io/GitHubTrendingRSS/daily/all.xml"
+    tag: "source/github-trending"
+    window: 24
+
   # --- Nitter (Twitter via RSS proxy) ---
   # Uses multi-instance fallback (defined in Python code)
   - name: "@_akhaliq"
