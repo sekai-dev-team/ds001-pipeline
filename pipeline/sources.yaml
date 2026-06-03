@@ -18,6 +18,11 @@ sources:
     tag: "source/langchain"
     window: 72
 
+  - name: "Hermes Agent Releases"
+    url: "https://github.com/NousResearch/hermes-agent/releases.atom"
+    tag: "source/hermes-agent"
+    window: 72
+
   - name: "Anthropic News"
     url: "https://news.google.com/rss/search?q=Anthropic+Claude+AI&hl=en-US&gl=US&ceid=US:en"
     tag: "source/anthropic-news"
@@ -50,6 +55,6 @@ sources:
     tag: "source/hackernews"
     window: 24
     hn_streams:
-      - "https://hnrss.org/frontpage?count=30"
+      - "https://hnrss.org/frontpage?count=20"
       - "https://hnrss.org/newest?points=50"
       - "https://hnrss.org/newest?q=LLM+OR+Agent+OR+Claude+OR+open+source"

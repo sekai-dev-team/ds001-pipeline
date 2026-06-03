@@ -294,7 +294,7 @@ def _build_hn_fetcher(name: str, tag: str, window: int, streams: list[str]) -> S
 ARXIV_QUERY = (
     "http://export.arxiv.org/api/query?"
     "search_query=cat:cs.AI+OR+cat:cs.CL"
-    "&sortBy=submittedDate&sortOrder=descending&max_results=50"
+    "&sortBy=submittedDate&sortOrder=descending&max_results=20"
 )
 
 
