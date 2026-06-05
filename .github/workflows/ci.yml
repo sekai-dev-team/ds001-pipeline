@@ -23,5 +23,5 @@ jobs:
           context: .
           push: true
           tags: |
-            kona01z/ds001-pipeline:latest
-            kona01z/ds001-pipeline:sha-${{ github.sha }}
+            kona01zz/ds001-pipeline:latest
+            kona01zz/ds001-pipeline:sha-${{ github.sha }}
