@@ -3,7 +3,7 @@
 # Usage: ./build-and-push.sh
 set -euo pipefail
 
-IMAGE="kona01z/ds001-pipeline:latest"
+IMAGE="kona01zz/ds001-pipeline:latest"
 
 echo "==> Building Docker image: ${IMAGE}"
 docker build -t "${IMAGE}" .
