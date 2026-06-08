@@ -10,11 +10,17 @@ Reddit: .json API for discussion threads.
 from __future__ import annotations
 
 import logging
+import random
 import re
+import time
 import xml.etree.ElementTree as ET
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# arXiv API rate limiter — enforce minimum interval between requests
+_ARXIV_MIN_INTERVAL = 3.0  # seconds (arXiv asks for ≥3 s between API calls)
+_arxiv_last_call: float = 0.0
 
 # ---------------------------------------------------------------------------
 # URL pattern classification
@@ -241,9 +247,12 @@ def _fetch_reddit_discussion(url: str) -> Optional[str]:
 def _fetch_arxiv_abstract(url: str) -> Optional[str]:
     """Fetch paper abstract via the arXiv API for an ``/abs/XXXX`` URL.
 
-    Returns markdown-formatted ``# Title`` + abstract text, or *None*
-    on failure.
+    Enforces a 3-second minimum interval between arXiv API calls and retries
+    up to 4 times with exponential backoff on HTTP 429 or transient errors.
+    Returns markdown-formatted ``# Title`` + abstract text, or *None*.
     """
+    global _arxiv_last_call
+
     match = re.search(r"arxiv\.org/abs/(\d+(?:\.\d+)?)", url)
     if not match:
         return None
@@ -251,38 +260,68 @@ def _fetch_arxiv_abstract(url: str) -> Optional[str]:
     arxiv_id = match.group(1)
     api_url = f"http://export.arxiv.org/api/query?id_list={arxiv_id}"
 
-    try:
-        import requests as req_lib
+    import requests as req_lib
 
-        resp = req_lib.get(api_url, timeout=30)
-        resp.raise_for_status()
+    max_retries = 4
+    for attempt in range(max_retries):
+        # Enforce minimum interval between arXiv API calls
+        elapsed = time.monotonic() - _arxiv_last_call
+        if elapsed < _ARXIV_MIN_INTERVAL:
+            time.sleep(_ARXIV_MIN_INTERVAL - elapsed)
+        _arxiv_last_call = time.monotonic()
 
-        root = ET.fromstring(resp.content)
-        ns = {"atom": "http://www.w3.org/2005/Atom"}
+        try:
+            resp = req_lib.get(api_url, timeout=30)
 
-        title_el = root.find(".//atom:title", ns)
-        summary_el = root.find(".//atom:summary", ns)
+            if resp.status_code == 429:
+                raw = resp.headers.get("Retry-After", "")
+                base = int(raw) if raw.isdigit() else 15 * (2 ** attempt)
+                delay = min(base + random.uniform(0, 5), 60.0)
+                logger.warning(
+                    "arXiv 429 for %s, sleeping %.1fs (attempt %d/%d)",
+                    arxiv_id, delay, attempt + 1, max_retries,
+                )
+                time.sleep(delay)
+                continue
 
-        title = (
-            title_el.text.strip()
-            if title_el is not None and title_el.text
-            else "Untitled"
-        )
-        summary = (
-            summary_el.text.strip()
-            if summary_el is not None and summary_el.text
-            else ""
-        )
+            resp.raise_for_status()
 
-        if summary:
-            return f"# {title}\n\n{summary}"
-        return None
-    except ET.ParseError:
-        logger.exception("arXiv API XML parse failed for: %s", url)
-        return None
-    except Exception:
-        logger.exception("arXiv API request failed for: %s", url)
-        return None
+            root = ET.fromstring(resp.content)
+            ns = {"atom": "http://www.w3.org/2005/Atom"}
+            title_el = root.find(".//atom:title", ns)
+            summary_el = root.find(".//atom:summary", ns)
+            title = (
+                title_el.text.strip()
+                if title_el is not None and title_el.text
+                else "Untitled"
+            )
+            summary = (
+                summary_el.text.strip()
+                if summary_el is not None and summary_el.text
+                else ""
+            )
+
+            if summary:
+                return f"# {title}\n\n{summary}"
+            return None
+
+        except ET.ParseError:
+            logger.exception("arXiv API XML parse failed for: %s", url)
+            return None
+        except Exception:
+            if attempt < max_retries - 1:
+                delay = 5.0 * (2 ** attempt) + random.uniform(0, 2)
+                logger.warning(
+                    "arXiv request failed for %s, retrying in %.1fs (attempt %d/%d)",
+                    url, delay, attempt + 1, max_retries,
+                )
+                time.sleep(delay)
+                continue
+            logger.exception("arXiv API request failed for: %s", url)
+            return None
+
+    logger.error("arXiv API gave up after %d attempts for: %s", max_retries, url)
+    return None
 
 
 # ---------------------------------------------------------------------------

@@ -47,7 +47,7 @@ def _fetch_feed(url: str, timeout: int = REQUEST_TIMEOUT) -> feedparser.FeedPars
         try:
             resp = _session.get(url, timeout=timeout)
             if resp.status_code == 429:
-                retry_after = int(resp.headers.get("Retry-After", "15"))
+                retry_after = min(int(resp.headers.get("Retry-After", "15")), 60)
                 if attempt < max_retries:
                     logger.warning(
                         "HTTP 429 from %s, retrying in %ds (attempt %d/%d)",
